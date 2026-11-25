@@ -7,8 +7,10 @@ import unittest
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from store import Store
+from academic import artifact_for
+from bibtex import render
 from inbox import read_folder
+from store import Store
 
 
 FIXTURE = Path(__file__).with_name("fixtures") / "records.json"
@@ -159,3 +161,76 @@ class StorageTest(unittest.TestCase):
         self.store.remove_inbox(item["id"])
         self.assertEqual(self.store.note(note_id)["text"], "A note from the inbox")
         self.assertEqual(self.store.import_inbox(read_folder(source)["files"]), {"added": 1, "duplicates": 1})
+
+    def test_academic_sources_identity_and_bibtex_round_trip(self):
+        fixture = Path(__file__).resolve().parents[1] / "vendor" / "thia-gestalts" / "examples"
+        for vectors in json.loads((fixture / "v1" / "identity.json").read_text()).values():
+            for pair in vectors:
+                for record in pair:
+                    if record["kind"] in {"topic", "artifact"}:
+                        self.assertEqual(artifact_for(record["name"])["id"], record["id"])
+        # The Cyrillic Tje case pair was added in Unicode 16.0.
+        self.assertEqual(artifact_for("\u1c89")["id"], artifact_for("\u1c8a")["id"])
+        with self.assertRaises(ValueError):
+            artifact_for("\ud800")
+
+        citations = json.loads((fixture / "v2" / "desktop.json").read_text())["citations"]
+        raw = render(citations).replace("  year = {2024},", r"  year = 2024, support = {\textsc{EU} # literal},")
+        first, second = self.store.import_sources(self.store.preview_bibtex(raw))
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(first["artifact"], citations[0]["artifact"])
+        self.assertEqual(second["artifact"], first["artifact"])
+        self.assertEqual(len(self.store.source_library()["artifacts"]), 1)
+        self.assertEqual(second["fields"]["support"], r"\textsc{EU} # literal")
+
+        changed = {**second, "fields": {**second["fields"], "edition": "3"}}
+        updated = self.store.save_source(second, changed)
+        with self.assertRaisesRegex(ValueError, "changed"):
+            self.store.save_source(second, changed)
+        self.assertEqual(self.store.get(first["kind"], first["id"]), first)
+        self.assertEqual(updated["id"], second["id"])
+        note_id = str(uuid4())
+        artifact_id = first["artifact"]["id"]
+        self.store.edit_note(note_id, "A related note", True, artifact_id=artifact_id)
+        annotation = self.store.add_annotation(artifact_id, "A second reading", "p. 42")
+        self.reopen()
+        links = self.store.source_links(artifact_id)
+        self.assertEqual(links["notes"], [{"id": note_id, "title": "A related note"}])
+        self.assertEqual(links["annotations"], [annotation])
+        exported = self.store.preview_bibtex(self.store.export_bibtex())
+        self.assertEqual(exported[0]["fields"], first["fields"])
+        self.assertEqual(exported[1]["fields"], changed["fields"])
+
+        merged = self.store.reconcile_source(first, updated, ["year"], stored=True)
+        self.assertEqual(merged["citationKey"], first["citationKey"])
+        self.assertEqual(merged["fields"]["year"], "2024")
+        self.assertEqual(merged["fields"]["support"], updated["fields"]["support"])
+        self.assertIsNone(self.store.get(second["kind"], second["id"]))
+        self.assertEqual(self.store.source_links(artifact_id), links)
+
+    def test_bibtex_macros_types_and_invalid_batch(self):
+        text = r"""
+          % @ignore{comment}
+          @string{cup = "Cambridge"}
+          @custom_edition(publisher2024,
+            title = "B{\'e}zier " # {Curves},
+            publisher = cup # " University Press",
+            file = {:/tmp/a.pdf:PDF}, month = feb, options = {})
+          @misc{withoutFields}
+        """
+        custom, empty = self.store.preview_bibtex(text)
+        self.assertEqual(custom["work"]["name"], "Bézier Curves")
+        self.assertEqual(custom["bibtexType"], "custom_edition")
+        self.assertEqual(custom["fields"], {
+            "title": r"B{\'e}zier Curves", "publisher": "Cambridge University Press",
+            "file": ":/tmp/a.pdf:PDF", "month": "February", "options": "",
+        })
+        self.assertEqual(empty["work"]["name"], "withoutFields")
+        with self.assertRaisesRegex(ValueError, "already in use"):
+            self.store.import_sources([custom, {**empty, "citationKey": custom["citationKey"]}])
+        self.assertEqual(self.store.source_library(), {"entries": [], "artifacts": []})
+        with self.assertRaisesRegex(ValueError, "BibTeX line"):
+            self.store.preview_bibtex(text + "@book{broken, title = {Unclosed}")
+        with self.assertRaisesRegex(ValueError, "brace grouping"):
+            self.store.import_sources([custom, {**empty, "fields": {"title": "Unclosed {"}}])
+        self.assertEqual(self.store.source_library(), {"entries": [], "artifacts": []})

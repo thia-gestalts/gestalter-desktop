@@ -8,6 +8,8 @@ import sqlite3
 import time
 from uuid import UUID, uuid4
 
+import academic
+import bibtex
 from inbox import INBOX
 from outline import BRANCHES, EXCLUDE, FOLLOWS, ROOT, is_place, outline
 
@@ -18,12 +20,16 @@ READS = {
     "listNotes": "list_notes", "getNote": "note", "getImage": "image",
     "recentPractice": "recent_practice", "zettelkasten": "zettelkasten",
     "listInbox": "list_inbox", "getInboxItem": "inbox_item",
+    "sourceLibrary": "source_library", "previewBibtex": "preview_bibtex",
+    "sourceLinks": "source_links", "exportBibtex": "export_bibtex",
 }
 WRITES = {
     "saveNote": "edit_note", "deleteNote": "delete_note", "link": "link",
     "attachImage": "attach_image", "detachImage": "detach_image", "importPractice": "import_practice",
     "placeNote": "place_note", "importInbox": "import_inbox", "deferInbox": "defer_inbox",
     "removeInbox": "remove_inbox",
+    "importSources": "import_sources", "saveSource": "save_source",
+    "reconcileSource": "reconcile_source", "addAnnotation": "add_annotation",
 }
 
 PRACTICE = """
@@ -150,7 +156,7 @@ class Store:
             "related": [{**ref, "label": self.label(ref)} for ref in record.get("related", [])],
         }
 
-    def edit_note(self, id, text, create=False, inbox_id=None):
+    def edit_note(self, id, text, create=False, inbox_id=None, artifact_id=None):
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Write some Markdown before saving the note.")
         if len(text) > 1_000_000:
@@ -166,6 +172,8 @@ class Store:
                     item = self.require_inbox_item(inbox_id)
                     item["notes"] = [*item.get("notes", []), id]
                     self.put(item)
+                if artifact_id is not None:
+                    record["related"] = [self.artifact_reference(artifact_id)]
             if record is None:
                 raise ValueError("This note has been deleted.")
             record["text"] = text
@@ -305,6 +313,124 @@ class Store:
     def remove_inbox(self, id):
         with self.transaction():
             self.delete(INBOX, id)
+
+    def list_sources(self):
+        rows = self.db.execute("""
+            SELECT body FROM records WHERE kind=?
+            ORDER BY body ->> '$.citationKey' COLLATE NOCASE, id
+        """, (academic.SOURCE,))
+        return [json.loads(row["body"]) for row in rows]
+
+    def preview_bibtex(self, text):
+        return academic.preview(text)
+
+    def source_library(self):
+        artifacts = self.db.execute("""
+            SELECT body FROM records WHERE kind='artifact'
+            ORDER BY body ->> '$.name' COLLATE NOCASE, id
+        """)
+        return {"entries": self.list_sources(), "artifacts": [json.loads(row["body"]) for row in artifacts]}
+
+    def export_bibtex(self):
+        sources = self.list_sources()
+        self.check_source_keys(sources)
+        return bibtex.render(academic.validate_bib(source) for source in sources)
+
+    def artifact_reference(self, id):
+        if self.get("artifact", id) is None:
+            raise ValueError("This artifact is unavailable.")
+        return {"kind": "artifact", "id": id}
+
+    def source_links(self, artifact_id):
+        artifact = self.get("artifact", artifact_id)
+        notes = self.db.execute("""
+            SELECT id, body ->> '$.text' AS text FROM records
+            WHERE kind='note' AND EXISTS (
+                SELECT 1 FROM json_each(body, '$.related') ref
+                WHERE ref.value ->> '$.kind' = 'artifact' AND ref.value ->> '$.id' = ?
+            )
+            ORDER BY rowid DESC
+        """, (artifact_id,))
+        annotations = self.db.execute("""
+            SELECT body FROM records WHERE kind='annotation'
+            AND body ->> '$.target.kind' = 'artifact' AND body ->> '$.target.id' = ?
+            ORDER BY rowid DESC
+        """, (artifact_id,))
+        return {
+            "artifact": artifact,
+            "notes": [{"id": row["id"], "title": title(row["text"])} for row in notes],
+            "annotations": [json.loads(row["body"]) for row in annotations],
+        }
+
+    def check_source_keys(self, sources, existing=()):
+        keys = {entry["citationKey"].casefold() for entry in existing}
+        for source in sources:
+            key = source["citationKey"]
+            folded = key.casefold()
+            if folded in keys:
+                raise ValueError(f"The citation key {key} is already in use. Choose a different key or reconcile the entries.")
+            keys.add(folded)
+
+    def source_record(self, entry, previous=None):
+        values = academic.validate_bib(entry)
+        if previous and values["fields"].get("title") == previous["fields"].get("title"):
+            ref = previous["artifact"]
+        else:
+            artifact = academic.entry_artifact(values)
+            if self.get("artifact", artifact["id"]) is None:
+                self.put(artifact)
+            ref = {"kind": "artifact", "id": artifact["id"]}
+        record = previous or {"kind": academic.SOURCE, "id": str(uuid4())}
+        return {**record, **values, "artifact": ref}
+
+    def import_sources(self, entries):
+        with self.transaction():
+            sources = [self.source_record(entry) for entry in entries]
+            self.check_source_keys(sources, self.list_sources())
+            for source in sources:
+                self.put(source)
+        return sources
+
+    def current_source(self, snapshot):
+        current = self.get(academic.SOURCE, snapshot["id"])
+        if current is None or current != snapshot:
+            raise ValueError("This entry changed. Reopen it before saving.")
+        return current
+
+    def save_source(self, snapshot, entry):
+        with self.transaction():
+            source = self.source_record(entry, self.current_source(snapshot))
+            self.check_source_keys([source], (row for row in self.list_sources() if row["id"] != source["id"]))
+            self.put(source)
+        return source
+
+    def reconcile_source(self, snapshot, incoming, take_fields, take_key=False, take_type=False, stored=False):
+        with self.transaction():
+            current = self.current_source(snapshot)
+            other = self.current_source(incoming) if stored else academic.validate_bib(incoming)
+            if stored and current["id"] == other["id"]:
+                raise ValueError("Choose two different entries.")
+            entry = academic.merged_bib(current, other, take_fields, take_key, take_type)
+            source = self.source_record(entry, current)
+            replaced_ids = {current["id"], other["id"]} if stored else {current["id"]}
+            self.check_source_keys([source], (row for row in self.list_sources() if row["id"] not in replaced_ids))
+            self.put(source)
+            if stored:
+                self.delete(academic.SOURCE, other["id"])
+        return source
+
+    def add_annotation(self, artifact_id, text, locator=""):
+        if not isinstance(text, str) or not text.strip() or len(text) > 1_000_000:
+            raise ValueError("Write some annotation text (up to one million characters).")
+        if not isinstance(locator, str):
+            raise ValueError("Enter a text locator.")
+        with self.transaction():
+            record = {"kind": "annotation", "id": str(uuid4()), "text": text,
+                      "target": self.artifact_reference(artifact_id)}
+            if locator.strip():
+                record["locator"] = locator.strip()
+            self.put(record)
+        return record
 
     def attach_image(self, id, name, encoded):
         if len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):

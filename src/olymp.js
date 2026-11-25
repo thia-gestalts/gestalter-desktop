@@ -9,16 +9,20 @@ export const session = stored?.origin === service ? stored : null;
 const scope = session && JSON.stringify([service, session.account.id]);
 const sql = (method, ...args) => window.gestalter.call('account', scope, method, args);
 const lock = work => navigator.locks.request('olymp:' + scope, work);
-const projectionKinds = new Set(['note', 'fact', 'skill', 'topic', 'learning-event', 'gestalter-inbox-text']);
+const sourceKinds = new Set(['artifact', 'annotation', 'gestalter-academic-source']);
+const projectionKinds = new Set(['note', 'fact', 'skill', 'topic', 'learning-event', 'gestalter-inbox-text', ...sourceKinds]);
 let localNames = new Map();
 let replica;
 
 function visible(group) {
-  if (group?.versions.length !== 1) return;
-  const version = group.versions[0];
-  const value = version.value;
-  if (!version.deleted && projectionKinds.has(value?.kind) && typeof value.id === 'string'
-      && value.id && sdk.recordKey(value) === group.key) return version;
+  if (!group) return;
+  // Concurrent spellings for one normalized artifact can share a display label.
+  // Leave both heads in the whole-base manifest.
+  const versions = group.versions.length === 1 ? group.versions
+    : group.versions.filter(version => version.value?.kind === 'artifact')
+      .sort((a, b) => a.ids[0] < b.ids[0] ? -1 : 1);
+  return versions.find(({ value, deleted }) => !deleted && projectionKinds.has(value?.kind)
+    && typeof value.id === 'string' && value.id && sdk.recordKey(value) === group.key);
 }
 
 async function save(state) {
@@ -28,7 +32,8 @@ async function save(state) {
   for (const group of sdk.entries(state.base.heads)) {
     const old = before.get(group.key);
     const next = visible(group);
-    if (JSON.stringify(old?.ids) === JSON.stringify(next?.ids)) continue;
+    const backfill = !previous?.academicProjection && sourceKinds.has(next?.value.kind);
+    if (!backfill && JSON.stringify(old?.ids) === JSON.stringify(next?.ids)) continue;
     if (!next) {
       if (old) rows.push([old.value.kind, old.value.id, null, []]);
       continue;
@@ -47,7 +52,7 @@ async function save(state) {
     }
     rows.push([value.kind, value.id, value, images]);
   }
-  await sql('save', state, rows);
+  await sql('save', { ...state, academicProjection: true }, rows);
   if (rows.length) window.dispatchEvent(new Event('replica-change'));
 }
 
@@ -60,6 +65,10 @@ if (session) {
     },
     saveChunk: (id, bytes) => sql('saveChunk', id, bytes.toBase64()),
   }, (_, path, options) => sdk.request('', path, options));
+  await lock(async () => {
+    const previous = await sql('state');
+    if (previous && !previous.academicProjection) await save(previous);
+  });
   replica.start();
   addEventListener('pagehide', () => replica.close());
 }
@@ -81,9 +90,11 @@ export async function logout() {
 }
 
 const noteWrites = new Set(['saveNote', 'deleteNote', 'link', 'attachImage', 'detachImage', 'placeNote']);
-const writes = new Set([...noteWrites, 'importPractice', 'importInbox', 'deferInbox', 'removeInbox']);
+const writes = new Set([...noteWrites, 'importPractice', 'importInbox', 'deferInbox', 'removeInbox',
+  'importSources', 'saveSource', 'reconcileSource', 'addAnnotation']);
 export async function call(method, args, observed) {
-  if (!session || method === 'pickInboxFolder') return window.gestalter.call(method, ...args);
+  if (!session || method === 'pickInboxFolder' || method === 'saveBibtexFile')
+    return window.gestalter.call(method, ...args);
   if (!writes.has(method)) {
     if (method !== 'getNote') return sql(method, ...args);
     return lock(async () => {
@@ -118,7 +129,8 @@ export async function call(method, args, observed) {
       const prior = visible(group);
       const files = [];
       const attachments = [];
-      for (const ref of change.value?.attachments ?? []) {
+      const refs = change.kind === 'note' ? change.value?.attachments ?? [] : [];
+      for (const ref of refs) {
         const image = change.images[ref.id];
         if (image) {
           localNames.set(ref.id, image.name);

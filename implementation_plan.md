@@ -19,18 +19,18 @@ sudo apt install ./release/gestalter-desktop_0.1.0_amd64.deb
 gestalter
 ```
 
-The installed desktop entry is **Gestalter**. The package bundles Electron 44.4.1 and a relocatable CPython 3.12.12 with SQLite. Runtime assumptions include glibc 2.34 or later, a graphical session, and the desktop libraries declared in the package. The package installs the Chromium sandbox helper root-owned with mode 4755. Running an extracted copy directly requires working unprivileged user namespaces or an equivalent Chromium sandbox setup. Ubuntu 26.04.1 x86-64 is the host used for the package checks. Other distribution versions and architectures remain unverified.
+The installed desktop entry is **Gestalter**. The package bundles Electron 44.4.1 and a relocatable CPython 3.14.0 with SQLite and Unicode 16.0.0 data. Runtime assumptions include glibc 2.34 or later, a graphical session, and the desktop libraries declared in the package. The package installs the Chromium sandbox helper root-owned with mode 4755. Running an extracted copy directly requires working unprivileged user namespaces or an equivalent Chromium sandbox setup. Ubuntu 26.04.1 x86-64 is the host used for the package checks. Other distribution versions and architectures remain unverified.
 
 To develop or rebuild, use Node.js 22.12 or later, uv, and Debian packaging tools:
 
 ```sh
 npm ci
-uv python install 3.12.12
+uv python install 3.14.0
 npm start
 npm run package:linux
 ```
 
-Development uses `python3` from PATH, or the interpreter set by `GESTALTER_PYTHON`. It needs SQLite with JSON operators. The package build uses uv's managed interpreter by default. Set `GESTALTER_PYTHON_ROOT` to a compatible standalone CPython 3.12.12 tree or `GESTALTER_ELECTRON_DIST` to an extracted Electron 44.4.1 Linux x86-64 distribution for offline staging. The local build used cached npm and Electron artifacts and the existing uv-managed interpreter. The `release/` directory contains the generated package.
+Development uses `python3` from PATH, or the interpreter set by `GESTALTER_PYTHON`. Use CPython 3.14 with SQLite JSON operators. The package build uses uv's managed interpreter by default. Set `GESTALTER_PYTHON_ROOT` to a standalone CPython 3.14.0 tree or `GESTALTER_ELECTRON_DIST` to an extracted Electron 44.4.1 Linux x86-64 distribution for offline staging. The `release/` directory contains the generated package.
 
 ## Verification
 
@@ -51,8 +51,7 @@ The tests import [the unchanged thia-gestalts v1 examples](tests/fixtures/record
 
 ## Remaining release work
 
-1. Implement the desktop academic schema, artifact references, BibTeX import/export, and duplicate reconciliation. Consult `packages/sources` and `plugins/source-manager`.
-2. Verify a mobile image note and the installed package on a clean Linux system. Desktop and vizint interoperability is covered below.
+Verify a mobile image note and the installed package on a clean Linux system. Desktop and vizint interoperability is covered below.
 
 
 ## Olymp integration checkpoint · 2026-11-25
@@ -103,3 +102,24 @@ GESTALTER_TEST_LAUNCHER=/usr/bin/gestalter \
 ```
 
 The test supplies the selected directory through the Electron dialog result. Interactive picker behavior and visual review remain open.
+
+## Academic Sources checkpoint · 2026-11-25
+
+**Academic Sources** accepts a UTF-8 `.bib` file or pasted BibTeX. The import review can keep every citation as a separate entry or update a selected existing entry. The library lists citations under their shared artifact. Compare stored entries side by side and explicitly select which conflicting values to keep. Reconciliation fills missing fields and retains the chosen record's ID. Reconciling two stored entries removes the other citation. An edit to a title can move just that citation to a different artifact. Open the artifact to create or link a Markdown note, or add an annotation with an optional locator.
+
+The desktop record has kind `gestalter-academic-source`, a UUIDv4, `citationKey`, `bibtexType`, an open map of string-valued `fields`, and a typed `artifact` reference. The import uses a decoded title for the artifact's display name and falls back to the citation key for titleless entries. The exporter writes UTF-8 BibTeX, preserving custom types, specialist field values and TeX grouping. Import expands defined strings and concatenation. BibTeX comments and preambles are outside the citation record and are omitted from export.
+
+The shared schema pin is `d96249be35f0220c60ce87845ac1cde729495c5f`, the completed twelve-kind release. The vendored snapshot includes the versioned schemas, examples and offline validator. The previous six-kind fixture remains for regression coverage. The packaged Python now supplies the exact Unicode 16.0.0 normalization and case-folding data required for artifact identity. [Release pin](vendor/thia-gestalts.pin.json)
+
+- **Passed** `npm test` and `python3 vendor/thia-gestalts/scripts/validate_examples.py`. The checks cover the shared identity vectors, one artifact for two citations, independent edits, duplicate reconciliation, custom types and fields, linked notes and annotations, and rollback on an invalid batch.
+- **Passed** `npm run package:linux` with the standalone CPython 3.14.0 interpreter and `npm run test:package:storage`.
+- **Passed** the packaged Electron workflow over live IPC with Olymp `e5f1a6326b892d5b600fdc2fdecfe900a15bcead` and vizint `4f2a78ecf3638fe7482093eb9b900f8a69f7badc`. Two editions of *Curve Sketchbook* appeared under one artifact. Editing the second edition and reconciling a pasted update preserved both records and their specialist fields. The test saved a linked Markdown note, an annotation with a page locator and a `.bib` file.
+- **Passed** the whole-base round trip. With the author desktop closed, vizint published a practice attempt and carried both citations and their links forward as opaque records. A fresh desktop profile recovered both editions under one artifact, found the note and annotation from either entry, displayed the practice attempt and wrote a byte-identical `.bib` export.
+
+```sh
+GESTALTER_TEST_LAUNCHER=/usr/bin/gestalter \
+  OLYMP_TEST_SERVER=../thia-olymp/target/debug/olymp \
+  xvfb-run -a node tests/sources.cjs
+```
+
+The workflow uses a built vizint site and a launcher with a configured Chromium sandbox helper. The test supplies the input file and output picker result. Interactive picker use and a clean Linux installation remain open.

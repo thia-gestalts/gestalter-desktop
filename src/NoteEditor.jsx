@@ -31,7 +31,7 @@ function Image({ image, disabled, onRemove }) {
   );
 }
 
-export function NoteEditor({ id, initial, onChanged, notes, inboxId, returnTo = '/notes', renderActions }) {
+export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId, returnTo = '/notes', renderActions }) {
   const navigate = useNavigate();
   const [note, setNote] = useState(initial);
   const [text, setText] = useState(initial?.text ?? '');
@@ -73,9 +73,9 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, returnTo = 
     const value = draft.current;
     if (value === (saved.current?.text ?? '') || (!saved.current && !value.trim())) return;
     const args = [id, value, !saved.current];
-    if (!saved.current && inboxId) args.push(inboxId);
+    if (!saved.current && (inboxId || artifactId)) args.push(inboxId ?? null, artifactId ?? null);
     updateNote(await edit(saved.current?.olympHeads, 'saveNote', ...args));
-  }, [id, inboxId, updateNote]);
+  }, [id, inboxId, artifactId, updateNote]);
 
   const flush = useCallback(() => enqueue(save), [enqueue, save]);
 

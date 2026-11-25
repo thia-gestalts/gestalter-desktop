@@ -1,6 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol } = require('electron');
 const path = require('node:path');
-const { readFile } = require('node:fs/promises');
+const { mkdtemp, readFile, rename, rm, writeFile } = require('node:fs/promises');
 const { StorageClient } = require('./client.cjs');
 const { pythonCommand } = require('./platform.cjs');
 
@@ -57,6 +57,8 @@ const methods = new Set([
   'listNotes', 'getNote', 'saveNote', 'deleteNote', 'link',
   'attachImage', 'detachImage', 'getImage', 'account', 'serviceOrigin', 'importPractice', 'recentPractice',
   'zettelkasten', 'placeNote', 'pickInboxFolder', 'importInbox', 'listInbox', 'getInboxItem', 'deferInbox', 'removeInbox',
+  'previewBibtex', 'sourceLibrary', 'sourceLinks', 'importSources', 'saveSource', 'reconcileSource', 'addAnnotation',
+  'exportBibtex', 'saveBibtexFile',
 ]);
 
 if (!app.requestSingleInstanceLock()) {
@@ -85,6 +87,24 @@ function launch() {
       if (method === 'pickInboxFolder') {
         const { canceled, filePaths } = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
         return { result: canceled ? null : await storage.call('readInboxFolder', [filePaths[0]]) };
+      }
+      if (method === 'saveBibtexFile') {
+        const [text] = args;
+        if (typeof text !== 'string') throw Error('Expected BibTeX text.');
+        const { canceled, filePath } = await dialog.showSaveDialog(window, {
+          title: 'Export BibTeX', defaultPath: 'sources.bib', filters: [{ name: 'BibTeX', extensions: ['bib'] }],
+        });
+        if (canceled || !filePath) return { result: false };
+        if (path.extname(filePath).toLowerCase() !== '.bib') throw Error('Choose a filename ending in .bib.');
+        const temporary = await mkdtemp(path.join(path.dirname(filePath), '.gestalter-'));
+        try {
+          const pending = path.join(temporary, 'sources.bib');
+          await writeFile(pending, text, { mode: 0o600 });
+          await rename(pending, filePath);
+        } finally {
+          await rm(temporary, { recursive: true });
+        }
+        return { result: true };
       }
       return { result: method === 'serviceOrigin' ? service.origin : await storage.call(method, args) };
     } catch (error) {

@@ -6,6 +6,7 @@ import { Activity, NotebookPen, Plus, Search } from 'lucide-react';
 import { FilePicker } from './native-files';
 import { OpenNote, useRead } from './note-route';
 import { Inbox } from './Inbox';
+import { Sources } from './Sources';
 import { Zettelkasten } from './Zettelkasten';
 import { call, handleWindowClose } from './storage';
 import { Account, AccountStatus } from './Account';
@@ -43,6 +44,7 @@ function Frame() {
         <nav className="flex flex-wrap gap-1" aria-label="Workspace">
           <NavLink to="/notes" className="nav-link">Notes</NavLink>
           <NavLink to="/zettelkasten" className="nav-link">Zettelkasten</NavLink>
+          <NavLink to="/sources" className="nav-link">Academic Sources</NavLink>
           <NavLink to="/inbox" className="nav-link">Plaintext inbox</NavLink>
           <NavLink to="/practice" className="nav-link">Recent practice</NavLink>
           <NavLink to="/account" className="nav-link">Account</NavLink>
@@ -133,6 +135,7 @@ const router = createHashRouter([{
     { path: 'notes/:id?', element: <Notes /> },
     { path: 'zettelkasten/:id?', element: <Zettelkasten /> },
     { path: 'inbox/:itemId?/:id?', element: <Inbox /> },
+    { path: 'sources/:id?/:noteId?', element: <Sources /> },
     { path: 'account', element: <Account /> },
     { path: 'practice', element: <Practice /> },
     { path: '*', element: <Navigate to="/notes" replace /> },

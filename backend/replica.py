@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 
+from academic import artifact_for
 from store import READS, WRITES, Store, identity
 
 
@@ -87,6 +88,15 @@ class AccountStore(Store):
                 if value is None:
                     self.delete(kind, id)
                     continue
+                if kind == "artifact":
+                    name = value.get("name")
+                    try:
+                        valid = isinstance(name, str) and artifact_for(name)["id"] == id
+                    except ValueError:
+                        valid = False
+                    if not valid:
+                        self.delete(kind, id)
+                        continue
                 for image in images:
                     data = base64.b64decode(image["data"], validate=True)
                     digest = hashlib.sha256(data).hexdigest()
