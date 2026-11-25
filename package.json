@@ -5,7 +5,7 @@
   "productName": "Gestalter",
   "main": "desktop/main.cjs",
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node scripts/olymp.mjs",
     "start": "npm run build && electron .",
     "package:linux": "npm run build && sh packaging/linux.sh",
     "test": "python3 -m unittest discover -s tests",

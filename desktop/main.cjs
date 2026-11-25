@@ -4,22 +4,44 @@ const { readFile } = require('node:fs/promises');
 const { StorageClient } = require('./client.cjs');
 const { pythonCommand } = require('./platform.cjs');
 
+const service = new URL(process.env.OLYMP_ORIGIN || 'http://127.0.0.1:8787');
+if (service.protocol !== 'https:' && !(service.protocol === 'http:' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(service.hostname))) {
+  throw Error('Olymp requires HTTPS outside loopback.');
+}
 const entryUrl = 'gestalter://app/index.html';
 protocol.registerSchemesAsPrivileged([{
   scheme: 'gestalter',
-  privileges: { standard: true, secure: true, corsEnabled: true },
+  privileges: { standard: true, secure: true, corsEnabled: true, supportFetchAPI: true },
 }]);
 
 const contentTypes = {
   '.html': 'text/html',
   '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.wasm': 'application/wasm',
   '.css': 'text/css',
 };
 
 async function asset(request) {
   const { hostname, pathname } = new URL(request.url);
+  if (hostname === 'app' && pathname.startsWith('/v1/')) {
+    const headers = new Headers();
+    for (const key of ['authorization', 'x-olymp-account', 'content-type']) {
+      if (request.headers.has(key)) headers.set(key, request.headers.get(key));
+    }
+    try {
+      return await fetch(service.origin + pathname, {
+        method: request.method, headers, redirect: 'error', signal: request.signal,
+        body: request.body ? await request.arrayBuffer() : undefined,
+      });
+    } catch {
+      return new Response(null, { status: 503 });
+    }
+  }
+  const runtime = /^\/olymp\/(client\.js|browser\.js|opaque\/opaque(\.js|_bg\.wasm)|sodium\/libsodium-(wrappers|sumo)\.mjs)$/;
   if (request.method !== 'GET' || hostname !== 'app'
-      || (pathname !== '/index.html' && !/^\/assets\/[\w-]+\.(js|css)$/.test(pathname))) {
+      || (pathname !== '/index.html' && !runtime.test(pathname) && !/^\/assets\/[\w-]+\.(js|css)$/.test(pathname))) {
     return new Response(null, { status: 404 });
   }
   try {
@@ -33,7 +55,7 @@ async function asset(request) {
 
 const methods = new Set([
   'listNotes', 'getNote', 'saveNote', 'deleteNote', 'link',
-  'attachImage', 'detachImage', 'getImage', 'importPractice', 'recentPractice',
+  'attachImage', 'detachImage', 'getImage', 'account', 'serviceOrigin', 'importPractice', 'recentPractice',
 ]);
 
 if (!app.requestSingleInstanceLock()) {
@@ -59,7 +81,7 @@ function launch() {
       return { error: 'Unknown storage request.' };
     }
     try {
-      return { result: await storage.call(method, args) };
+      return { result: method === 'serviceOrigin' ? service.origin : await storage.call(method, args) };
     } catch (error) {
       return { error: error.message };
     }
@@ -100,7 +122,9 @@ function launch() {
       },
     });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    window.webContents.on('will-navigate', (event) => event.preventDefault());
+    window.webContents.on('will-navigate', (event) => {
+      if (event.url.split('#')[0] !== entryUrl) event.preventDefault();
+    });
     window.on('close', (event) => {
       if (closeApproved || window.webContents.isCrashed() || window.webContents.isLoadingMainFrame()) return;
       event.preventDefault();

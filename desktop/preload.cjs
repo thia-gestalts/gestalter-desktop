@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('gestalter', {
+  serviceOrigin: () => ipcRenderer.invoke('storage', 'serviceOrigin', []).then(reply => reply.result),
   call: async (method, ...args) => {
     const { result, error } = await ipcRenderer.invoke('storage', method, args);
     if (error) throw new Error(error);

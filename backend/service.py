@@ -1,5 +1,8 @@
 import json
 import sys
+import hashlib
+
+from replica import AccountStore
 
 from platform_paths import data_directory
 from store import Store
@@ -7,7 +10,21 @@ from store import Store
 
 def main():
     store = Store(data_directory())
+    account_store = None
+    active_scope = None
+
+    def account(scope, method, args):
+        nonlocal account_store, active_scope
+        if scope != active_scope:
+            directory = data_directory() / "accounts" / hashlib.sha256(scope.encode()).hexdigest()
+            replacement = AccountStore(directory)
+            if account_store:
+                account_store.close()
+            account_store, active_scope = replacement, scope
+        return account_store.call(method, args)
+
     methods = {
+        "account": account,
         "listNotes": store.list_notes,
         "getNote": store.note,
         "saveNote": store.edit_note,
@@ -34,6 +51,8 @@ def main():
             print(json.dumps({"id": request["id"], **response}), flush=True)
     finally:
         store.close()
+        if account_store:
+            account_store.close()
 
 
 if __name__ == "__main__":

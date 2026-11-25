@@ -3,7 +3,7 @@ import { Link, useBlocker, useNavigate } from 'react-router-dom';
 import { ImagePlus, Save, Trash2, Unlink } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { FilePicker, imagePayload } from './native-files';
-import { call, registerEditorFlush } from './storage';
+import { call, edit, registerEditorFlush } from './storage';
 
 function Image({ image, disabled, onRemove }) {
   const [src, setSrc] = useState('');
@@ -72,7 +72,7 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
   const save = useCallback(async () => {
     const value = draft.current;
     if (value === (saved.current?.text ?? '') || (!saved.current && !value.trim())) return;
-    updateNote(await call('saveNote', id, value, !saved.current));
+    updateNote(await edit(saved.current?.olympHeads, 'saveNote', id, value, !saved.current));
   }, [id, updateNote]);
 
   const flush = useCallback(() => enqueue(save), [enqueue, save]);
@@ -90,12 +90,12 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
   });
 
   const attach = (files) => mutate(async () => {
-    for (const file of files) updateNote(await call('attachImage', id, file.name, await imagePayload(file)));
+    for (const file of files) updateNote(await edit(saved.current?.olympHeads, 'attachImage', id, file.name, await imagePayload(file)));
   });
 
   const remove = async () => {
     const removed = await enqueue(async () => {
-      await call('deleteNote', id);
+      await edit(saved.current?.olympHeads, 'deleteNote', id);
       draft.current = '';
       updateNote(null);
     });
@@ -169,7 +169,7 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             {note.attachments.map((image) => (
               <Image key={image.id} image={image} disabled={busy}
-                onRemove={() => mutate(async () => updateNote(await call('detachImage', id, image.id)))} />
+                onRemove={() => mutate(async () => updateNote(await edit(saved.current?.olympHeads, 'detachImage', id, image.id)))} />
             ))}
           </div>
         )}
@@ -184,7 +184,7 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
                   ? <Link className="link" to={`/notes/${ref.id}`}>{ref.label}</Link>
                   : <span className="break-all">{ref.label ?? `Unavailable · ${ref.id}`}</span>}
                 <button type="button" className="btn btn-ghost btn-square btn-sm" aria-label="Remove relationship"
-                  disabled={busy} onClick={() => mutate(async () => updateNote(await call('link', id, ref.kind, ref.id, true)))}>
+                  disabled={busy} onClick={() => mutate(async () => updateNote(await edit(saved.current?.olympHeads, 'link', id, ref.kind, ref.id, true)))}>
                   <Unlink size={16} />
                 </button>
               </li>
@@ -199,7 +199,7 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
               {choices.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}
             </select>
             <button type="button" className="btn btn-sm" disabled={!target || busy} onClick={() => mutate(async () => {
-              updateNote(await call('link', id, 'note', target));
+              updateNote(await edit(saved.current?.olympHeads, 'link', id, 'note', target));
               setTarget('');
             })}>Link note</button>
           </div>

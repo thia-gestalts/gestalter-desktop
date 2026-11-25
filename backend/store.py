@@ -75,7 +75,7 @@ class Store:
             );
             CREATE TABLE IF NOT EXISTS images (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, media_type TEXT NOT NULL,
-                digest TEXT NOT NULL UNIQUE, data BLOB NOT NULL
+                digest TEXT NOT NULL, data BLOB NOT NULL
             );
             CREATE INDEX IF NOT EXISTS practice_time
               ON records ((body ->> '$.occurredAtMs') DESC)

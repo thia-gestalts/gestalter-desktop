@@ -56,10 +56,13 @@ async function main() {
     const source = await fs.readFile(path.join(dist, entry), 'utf8');
     let flushForClose;
     const openRenderer = () => {
-      window = new Window({ url: 'https://gestalter.invalid/index.html#/notes' });
+      window = new Window({ url: 'https://gestalter.invalid/index.html#/notes', settings: { enableJavaScriptEvaluation: true } });
       window.document.write('<div id="root"></div>');
       window.gestalter = { call, onClose(callback) { flushForClose = callback; } };
-      window.eval(source);
+      const script = window.document.createElement('script');
+      script.type = 'module';
+      script.textContent = source;
+      window.document.body.append(script);
     };
     openRenderer();
     const find = (selector, name) => [...window.document.querySelectorAll(selector)].find((el) => el.textContent.trim() === name);

@@ -6,11 +6,16 @@ import { Activity, NotebookPen, Plus, Search } from 'lucide-react';
 import { FilePicker } from './native-files';
 import { NoteEditor } from './NoteEditor';
 import { call, handleWindowClose } from './storage';
+import { Account, AccountStatus } from './Account';
 import './style.css';
 
 function Frame() {
   const [revision, setRevision] = useState(0);
   const changed = useCallback(() => setRevision((value) => value + 1), []);
+  useEffect(() => {
+    window.addEventListener('replica-change', changed);
+    return () => window.removeEventListener('replica-change', changed);
+  }, [changed]);
   const [importing, setImporting] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -36,7 +41,9 @@ function Frame() {
         <nav className="flex gap-1" aria-label="Workspace">
           <NavLink to="/notes" className="nav-link">Notes</NavLink>
           <NavLink to="/practice" className="nav-link">Recent practice</NavLink>
+          <NavLink to="/account" className="nav-link">Account</NavLink>
         </nav>
+        <AccountStatus />
         <div className="ml-auto">
           <FilePicker accept=".json,application/json" disabled={importing} onFiles={importRecords}>Import practice records</FilePicker>
         </div>
@@ -141,6 +148,7 @@ const router = createHashRouter([{
   children: [
     { index: true, element: <Navigate to="/notes" replace /> },
     { path: 'notes/:id?', element: <Notes /> },
+    { path: 'account', element: <Account /> },
     { path: 'practice', element: <Practice /> },
     { path: '*', element: <Navigate to="/notes" replace /> },
   ],
