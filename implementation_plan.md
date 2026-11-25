@@ -51,10 +51,8 @@ The tests import [the unchanged thia-gestalts v1 examples](tests/fixtures/record
 
 ## Remaining release work
 
-1. Implement Zettelkasten placement using note relationships. Consult `plugins/zettelkasten` and `crates/core/src/outline.rs` for follows, branches, root selection, exclusions, missing parents, forks, and cycles.
-2. Port the folder inbox behavior from `plugins/note-inbox`. Import direct UTF-8 files, skip empty or binary inputs, deduplicate by filename and content, and allow multiple notes from one imported item.
-3. Implement the desktop academic schema, artifact references, BibTeX import/export, and duplicate reconciliation. Consult `packages/sources` and `plugins/source-manager`.
-4. Verify a mobile image note and the installed package on a clean Linux system. Desktop and vizint interoperability is covered below.
+1. Implement the desktop academic schema, artifact references, BibTeX import/export, and duplicate reconciliation. Consult `packages/sources` and `plugins/source-manager`.
+2. Verify a mobile image note and the installed package on a clean Linux system. Desktop and vizint interoperability is covered below.
 
 
 ## Olymp integration checkpoint · 2026-11-25
@@ -86,3 +84,22 @@ GESTALTER_TEST_LAUNCHER=/usr/bin/gestalter xvfb-run -a node tests/products.mjs
 The standalone build passed `npm ci --offline --no-audit --no-fund && npm run build` using the populated npm cache. The packaged storage regression and live Electron note CRUD, image restart and practice regressions all passed. The corrected Debian launcher selected the bundled interpreter with the development interpreter set to an unavailable path.
 
 The extracted-package run used live Electron IPC, bundled Python, and a root-owned Chromium sandbox helper supplied by the host. Olymp's implementation plan records the staging command. With Recent practice already open, an offline vizint attempt appeared automatically after reconnect, with its original event ID and time. Dropping the publication response produced one event and one displayed row. The note editor then saved a four-chunk PNG. Vizint resumed the interrupted download after restart, and the two clients confirmed revision 3 with identical manifests. The restarted editor reopened the original Markdown and 936,914 image bytes from SQLite. Sign-out reopened the guest workspace. A clean system installation, interactive OS picker and visual review remain unverified.
+
+## Zettelkasten and plaintext inbox checkpoint · 2026-11-25
+
+Both routes use the existing note editor. Desktop stores Zettelkasten tags and labelled note references on the note and derives the outline from current records. The route shows the root, followers, branches, unplaced and excluded notes, and placement problems. The plaintext inbox reads direct regular UTF-8 files, ignores subdirectories, reports skipped files, and identifies pending copies by filename and original bytes. Saving a new note from a text commits the note and its inbox association together. Deferring the copy moves it behind pending texts. Removing the copy leaves the notes and source files intact.
+
+- **Passed** `npm test`. SQLite coverage includes root and branch ordering, fork and cycle diagnostics, missing, unplaced and excluded parent diagnostics, rejection of invalid placements, and preservation of ordinary note links. Inbox coverage verifies filename-and-byte deduplication, deferral and note associations across reopen, and reimport after removal.
+- **Passed** `npm run package:linux` and `npm run test:package:storage`. The packaging run used the installed standalone CPython via `GESTALTER_PYTHON_ROOT`.
+- **Passed** the packaged Electron workflow over live IPC and a local Olymp service. The import reported duplicate and skipped files. Two notes from one text became the root and its follower. A third note exercised exclusion, reinclusion, and branch placement. The restarted profile reopened the edited Markdown, preserved the placements, and retained the deferred item and its two note links.
+- **Passed** the Olymp round trip. A fresh profile signed in and restored the inbox text, deferral, note links, root, follower and branch. Removing the imported copy on the fresh profile propagated back to the original profile. Both notes and their placements survived, and source bytes and the source symlink remained unchanged.
+
+Run the workflow with a built Olymp server and a staged or installed desktop launcher that has a working Chromium sandbox helper.
+
+```sh
+GESTALTER_TEST_LAUNCHER=/usr/bin/gestalter \
+  OLYMP_TEST_SERVER=../thia-olymp/target/debug/olymp \
+  xvfb-run -a node tests/workflows.cjs
+```
+
+The test supplies the selected directory through the Electron dialog result. Interactive picker behavior and visual review remain open.

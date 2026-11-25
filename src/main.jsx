@@ -4,7 +4,9 @@ import { createHashRouter, Link, NavLink, Navigate, Outlet, RouterProvider, useL
   useOutletContext, useParams } from 'react-router-dom';
 import { Activity, NotebookPen, Plus, Search } from 'lucide-react';
 import { FilePicker } from './native-files';
-import { NoteEditor } from './NoteEditor';
+import { OpenNote, useRead } from './note-route';
+import { Inbox } from './Inbox';
+import { Zettelkasten } from './Zettelkasten';
 import { call, handleWindowClose } from './storage';
 import { Account, AccountStatus } from './Account';
 import './style.css';
@@ -38,8 +40,10 @@ function Frame() {
     <>
       <header className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-base-300 bg-base-100 px-4 py-2 md:px-6">
         <Link to="/notes" className="flex items-center gap-2 text-lg font-semibold"><NotebookPen size={20} /> Gestalter</Link>
-        <nav className="flex gap-1" aria-label="Workspace">
+        <nav className="flex flex-wrap gap-1" aria-label="Workspace">
           <NavLink to="/notes" className="nav-link">Notes</NavLink>
+          <NavLink to="/zettelkasten" className="nav-link">Zettelkasten</NavLink>
+          <NavLink to="/inbox" className="nav-link">Plaintext inbox</NavLink>
           <NavLink to="/practice" className="nav-link">Recent practice</NavLink>
           <NavLink to="/account" className="nav-link">Account</NavLink>
         </nav>
@@ -53,27 +57,6 @@ function Frame() {
       <Outlet context={{ revision, changed }} />
     </>
   );
-}
-
-function useRead(method, arg, revision = 0) {
-  const [result, setResult] = useState({ value: undefined, error: '' });
-  useEffect(() => {
-    let current = true;
-    call(method, ...(arg === undefined ? [] : [arg])).then(
-      (value) => { if (current) setResult({ value, error: '' }); },
-      (failure) => { if (current) setResult({ value: null, error: failure.message }); },
-    );
-    return () => { current = false; };
-  }, [method, arg, revision]);
-  return result;
-}
-
-function OpenNote({ id, draft, notes, changed }) {
-  const { value, error } = useRead('getNote', id);
-  if (error) return <p role="alert" className="alert alert-error">{error}</p>;
-  if (value === undefined) return <p className="p-8 text-base-content/65">Loading note…</p>;
-  if (value === null && !draft) return <p className="p-8">This note is unavailable.</p>;
-  return <NoteEditor id={id} initial={value} notes={notes} onChanged={changed} />;
 }
 
 function Notes() {
@@ -148,6 +131,8 @@ const router = createHashRouter([{
   children: [
     { index: true, element: <Navigate to="/notes" replace /> },
     { path: 'notes/:id?', element: <Notes /> },
+    { path: 'zettelkasten/:id?', element: <Zettelkasten /> },
+    { path: 'inbox/:itemId?/:id?', element: <Inbox /> },
     { path: 'account', element: <Account /> },
     { path: 'practice', element: <Practice /> },
     { path: '*', element: <Navigate to="/notes" replace /> },

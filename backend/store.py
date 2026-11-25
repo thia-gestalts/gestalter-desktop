@@ -5,11 +5,26 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import time
 from uuid import UUID, uuid4
 
+from inbox import INBOX
+from outline import BRANCHES, EXCLUDE, FOLLOWS, ROOT, is_place, outline
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_IMPORT_BYTES = 16 * 1024 * 1024
+
+READS = {
+    "listNotes": "list_notes", "getNote": "note", "getImage": "image",
+    "recentPractice": "recent_practice", "zettelkasten": "zettelkasten",
+    "listInbox": "list_inbox", "getInboxItem": "inbox_item",
+}
+WRITES = {
+    "saveNote": "edit_note", "deleteNote": "delete_note", "link": "link",
+    "attachImage": "attach_image", "detachImage": "detach_image", "importPractice": "import_practice",
+    "placeNote": "place_note", "importInbox": "import_inbox", "deferInbox": "defer_inbox",
+    "removeInbox": "remove_inbox",
+}
 
 PRACTICE = """
 WITH ranked AS (
@@ -101,6 +116,9 @@ class Store:
         row = self.db.execute("SELECT body FROM records WHERE kind=? AND id=?", (kind, id)).fetchone()
         return json.loads(row["body"]) if row else None
 
+    def delete(self, kind, id):
+        self.db.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, id))
+
     def label(self, ref):
         kind, id = identity(ref)
         target = self.get(kind, id)
@@ -132,7 +150,7 @@ class Store:
             "related": [{**ref, "label": self.label(ref)} for ref in record.get("related", [])],
         }
 
-    def edit_note(self, id, text, create=False):
+    def edit_note(self, id, text, create=False, inbox_id=None):
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Write some Markdown before saving the note.")
         if len(text) > 1_000_000:
@@ -144,6 +162,10 @@ class Store:
                 if key.version != 4 or str(key) != id:
                     raise ValueError("Invalid note ID.")
                 record = {"kind": "note", "id": id}
+                if inbox_id is not None:
+                    item = self.require_inbox_item(inbox_id)
+                    item["notes"] = [*item.get("notes", []), id]
+                    self.put(item)
             if record is None:
                 raise ValueError("This note has been deleted.")
             record["text"] = text
@@ -159,7 +181,7 @@ class Store:
     def delete_note(self, id):
         with self.transaction():
             record = self.require_note(id)
-            self.db.execute("DELETE FROM records WHERE kind='note' AND id=?", (id,))
+            self.delete("note", id)
             for ref in record.get("attachments", []):
                 self.delete_unused_image(ref["id"])
 
@@ -169,14 +191,120 @@ class Store:
             refs = record.get("related", [])
             key = (kind, target)
             if remove:
-                refs = [ref for ref in refs if identity(ref) != key]
-            elif key != ("note", id) and all(identity(ref) != key for ref in refs):
+                refs = [ref for ref in refs if is_place(ref) or identity(ref) != key]
+            elif key != ("note", id) and all(is_place(ref) or identity(ref) != key for ref in refs):
                 if self.get(*key) is None:
                     raise ValueError("This record is unavailable.")
                 refs.append({"kind": kind, "id": target})
             record["related"] = refs
             self.put(record)
         return self.note(id)
+
+    def zettelkasten(self):
+        rows = self.db.execute("SELECT body FROM records WHERE kind='note' ORDER BY id")
+        notes = []
+        for row in rows:
+            note = json.loads(row["body"])
+            notes.append({
+                "id": note["id"], "title": title(note["text"]), "tags": note.get("tags", []),
+                "places": [{"id": ref["id"], "relation": ref["relation"]}
+                           for ref in note.get("related", []) if is_place(ref)],
+            })
+        return outline(notes)
+
+    def place_note(self, id, action, target=None):
+        with self.transaction():
+            record = self.require_note(id)
+            entries = {entry["id"]: entry for entry in self.zettelkasten()["entries"]}
+            status = entries[id]["status"]
+            refs = record.get("related", [])
+            tags = record.get("tags", [])
+            if action == "root":
+                if status != "unplaced" or any(entry["status"] == "root" for entry in entries.values()):
+                    raise ValueError("Choose an unplaced note while the outline has no root.")
+                record["tags"] = [*tags, ROOT]
+            elif action == "clearRoot":
+                record["tags"] = [tag for tag in tags if tag != ROOT]
+            elif action == "exclude":
+                if status != "unplaced":
+                    raise ValueError("Only unplaced notes can be excluded.")
+                record["tags"] = [*tags, EXCLUDE]
+            elif action == "include":
+                record["tags"] = [tag for tag in tags if tag != EXCLUDE]
+            elif action == "unplace":
+                record["related"] = [ref for ref in refs if not is_place(ref)]
+            elif action in (FOLLOWS, BRANCHES):
+                parent = entries.get(target)
+                if status in ("root", "excluded") or parent is None or parent["status"] not in ("root", "attached"):
+                    raise ValueError("Choose a placed target and a note eligible for placement.")
+                cursor = parent
+                while True:
+                    if cursor["id"] == id:
+                        raise ValueError("This placement would create a cycle.")
+                    if cursor["status"] == "root":
+                        break
+                    cursor = entries[cursor["place"]["id"]]
+                if action == FOLLOWS and parent["hasFollower"]:
+                    if any(entry["id"] != id and entry["status"] != "root"
+                           and entry["place"] == {"id": target, "relation": FOLLOWS} for entry in entries.values()):
+                        raise ValueError("A note already follows this target.")
+                record["related"] = [ref for ref in refs if not is_place(ref)]
+                record["related"].append({"kind": "note", "id": target, "relation": action})
+                record["tags"] = [tag for tag in tags if tag not in (ROOT, EXCLUDE)]
+            else:
+                raise ValueError("Unknown placement action.")
+            self.put(record)
+        return self.note(id)
+
+    def import_inbox(self, files):
+        added = duplicates = 0
+        with self.transaction():
+            for file in files:
+                name, text, digest = (file[field] for field in ("name", "text", "digest"))
+                if (not isinstance(name, str) or not name or not isinstance(text, str) or not text.strip()
+                        or not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest)):
+                    raise ValueError("Invalid plaintext import.")
+                id = hashlib.sha256(f"{name}\0{digest}".encode()).hexdigest()
+                if self.get(INBOX, id) is None:
+                    self.put({"kind": INBOX, "id": id, "name": name, "text": text})
+                    added += 1
+                else:
+                    duplicates += 1
+        return {"added": added, "duplicates": duplicates}
+
+    def list_inbox(self):
+        return [dict(row) for row in self.db.execute("""
+            SELECT id, body ->> '$.name' AS name, body ->> '$.deferredAt' AS deferredAt
+            FROM records WHERE kind=?
+            ORDER BY deferredAt, name COLLATE NOCASE, id
+        """, (INBOX,))]
+
+    def inbox_item(self, id):
+        item = self.get(INBOX, id)
+        if item is None:
+            return None
+        notes = []
+        for note_id in item.get("notes", []):
+            label = self.label({"kind": "note", "id": note_id})
+            if label is not None:
+                notes.append({"id": note_id, "title": label})
+        return {**item, "notes": notes}
+
+    def require_inbox_item(self, id):
+        item = self.get(INBOX, id)
+        if item is None:
+            raise ValueError("This imported text is unavailable.")
+        return item
+
+    def defer_inbox(self, id):
+        with self.transaction():
+            item = self.require_inbox_item(id)
+            item["deferredAt"] = time.time_ns() // 1_000_000
+            self.put(item)
+
+    def remove_inbox(self, id):
+        with self.transaction():
+            self.delete(INBOX, id)
 
     def attach_image(self, id, name, encoded):
         if len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):

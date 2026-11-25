@@ -56,6 +56,7 @@ async function asset(request) {
 const methods = new Set([
   'listNotes', 'getNote', 'saveNote', 'deleteNote', 'link',
   'attachImage', 'detachImage', 'getImage', 'account', 'serviceOrigin', 'importPractice', 'recentPractice',
+  'zettelkasten', 'placeNote', 'pickInboxFolder', 'importInbox', 'listInbox', 'getInboxItem', 'deferInbox', 'removeInbox',
 ]);
 
 if (!app.requestSingleInstanceLock()) {
@@ -81,6 +82,10 @@ function launch() {
       return { error: 'Unknown storage request.' };
     }
     try {
+      if (method === 'pickInboxFolder') {
+        const { canceled, filePaths } = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
+        return { result: canceled ? null : await storage.call('readInboxFolder', [filePaths[0]]) };
+      }
       return { result: method === 'serviceOrigin' ? service.origin : await storage.call(method, args) };
     } catch (error) {
       return { error: error.message };

@@ -9,8 +9,10 @@ export const edit = (observed, method, ...args) => dispatch(method, args, observ
 
 let flushEditor;
 
+export const flushOpenEditor = () => flushEditor?.() ?? true;
+
 export function handleWindowClose() {
-  window.gestalter.onClose(() => flushEditor?.() ?? true);
+  window.gestalter.onClose(flushOpenEditor);
 }
 
 export function registerEditorFlush(flush) {

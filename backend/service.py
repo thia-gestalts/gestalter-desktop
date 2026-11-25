@@ -3,9 +3,9 @@ import sys
 import hashlib
 
 from replica import AccountStore
-
+from inbox import read_folder
 from platform_paths import data_directory
-from store import Store
+from store import READS, WRITES, Store
 
 
 def main():
@@ -23,19 +23,8 @@ def main():
             account_store, active_scope = replacement, scope
         return account_store.call(method, args)
 
-    methods = {
-        "account": account,
-        "listNotes": store.list_notes,
-        "getNote": store.note,
-        "saveNote": store.edit_note,
-        "deleteNote": store.delete_note,
-        "link": store.link,
-        "attachImage": store.attach_image,
-        "detachImage": store.detach_image,
-        "getImage": store.image,
-        "importPractice": store.import_practice,
-        "recentPractice": store.recent_practice,
-    }
+    methods = {method: getattr(store, name) for method, name in {**READS, **WRITES}.items()}
+    methods.update(account=account, readInboxFolder=read_folder)
     try:
         print(json.dumps({"ready": True}), flush=True)
         for line in sys.stdin:

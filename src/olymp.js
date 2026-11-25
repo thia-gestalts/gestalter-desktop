@@ -9,7 +9,7 @@ export const session = stored?.origin === service ? stored : null;
 const scope = session && JSON.stringify([service, session.account.id]);
 const sql = (method, ...args) => window.gestalter.call('account', scope, method, args);
 const lock = work => navigator.locks.request('olymp:' + scope, work);
-const projectionKinds = new Set(['note', 'fact', 'skill', 'topic', 'learning-event']);
+const projectionKinds = new Set(['note', 'fact', 'skill', 'topic', 'learning-event', 'gestalter-inbox-text']);
 let localNames = new Map();
 let replica;
 
@@ -80,9 +80,10 @@ export async function logout() {
   location.reload();
 }
 
-const writes = new Set(['saveNote', 'deleteNote', 'link', 'attachImage', 'detachImage', 'importPractice']);
+const noteWrites = new Set(['saveNote', 'deleteNote', 'link', 'attachImage', 'detachImage', 'placeNote']);
+const writes = new Set([...noteWrites, 'importPractice', 'importInbox', 'deferInbox', 'removeInbox']);
 export async function call(method, args, observed) {
-  if (!session) return window.gestalter.call(method, ...args);
+  if (!session || method === 'pickInboxFolder') return window.gestalter.call(method, ...args);
   if (!writes.has(method)) {
     if (method !== 'getNote') return sql(method, ...args);
     return lock(async () => {
@@ -97,9 +98,10 @@ export async function call(method, args, observed) {
   let result;
   let noteKey;
   let existingIds;
+  let noteChangeIndex;
   const ids = await replica.writeBatch(async groups => {
     const byKey = new Map(groups.map(g => [g.key, g]));
-    if (method !== 'importPractice') {
+    if (noteWrites.has(method)) {
       noteKey = sdk.recordKey({ kind: 'note', id: args[0] });
       existingIds = visible(byKey.get(noteKey))?.ids ?? [];
       if (observed && JSON.stringify(existingIds) !== JSON.stringify(observed))
@@ -108,8 +110,9 @@ export async function call(method, args, observed) {
     const plan = await sql('prepare', method, args);
     result = plan.result;
     localNames = new Map();
-    return plan.changes.map(change => {
+    return plan.changes.map((change, index) => {
       const key = sdk.recordKey(change);
+      if (key === noteKey) noteChangeIndex = index;
       const group = byKey.get(key);
       if (group?.versions.length > 1) throw Error('This record has conflicting versions.');
       const prior = visible(group);
@@ -129,6 +132,6 @@ export async function call(method, args, observed) {
         files: change.kind === 'note' || !change.value ? files : prior?.files, attachments };
     });
   });
-  if (noteKey && result) result.olympHeads = ids.length ? ids : existingIds;
+  if (noteKey && result) result.olympHeads = noteChangeIndex === undefined ? existingIds : [ids[noteChangeIndex]];
   return result;
 }

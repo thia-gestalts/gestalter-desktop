@@ -31,7 +31,7 @@ function Image({ image, disabled, onRemove }) {
   );
 }
 
-export function NoteEditor({ id, initial, onChanged, notes }) {
+export function NoteEditor({ id, initial, onChanged, notes, inboxId, returnTo = '/notes', renderActions }) {
   const navigate = useNavigate();
   const [note, setNote] = useState(initial);
   const [text, setText] = useState(initial?.text ?? '');
@@ -72,8 +72,10 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
   const save = useCallback(async () => {
     const value = draft.current;
     if (value === (saved.current?.text ?? '') || (!saved.current && !value.trim())) return;
-    updateNote(await edit(saved.current?.olympHeads, 'saveNote', id, value, !saved.current));
-  }, [id, updateNote]);
+    const args = [id, value, !saved.current];
+    if (!saved.current && inboxId) args.push(inboxId);
+    updateNote(await edit(saved.current?.olympHeads, 'saveNote', ...args));
+  }, [id, inboxId, updateNote]);
 
   const flush = useCallback(() => enqueue(save), [enqueue, save]);
 
@@ -100,15 +102,16 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
       updateNote(null);
     });
     setConfirmDelete(false);
-    if (removed) navigate('/notes');
+    if (removed) navigate(returnTo);
   };
+  const related = note?.related.filter((ref) => !['follows', 'branches from'].includes(ref.relation)) ?? [];
   const choices = notes.filter((candidate) => candidate.id !== id
-    && !note?.related.some((ref) => ref.kind === 'note' && ref.id === candidate.id));
+    && !related.some((ref) => ref.kind === 'note' && ref.id === candidate.id));
 
   return (
     <section className="min-w-0 space-y-5 p-5 md:p-8" aria-label="Note editor">
       <div className="flex flex-wrap items-center gap-2">
-        <Link to="/notes" className="btn btn-ghost btn-sm md:hidden">All notes</Link>
+        {returnTo === '/notes' && <Link to="/notes" className="btn btn-ghost btn-sm md:hidden">All notes</Link>}
         <div className="join">
           <button type="button" className={`btn btn-sm join-item ${!preview ? 'btn-active' : ''}`}
             aria-pressed={!preview} onClick={() => setPreview(false)}>Write</button>
@@ -160,6 +163,9 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
             }
           }} />
       )}
+      {renderActions?.({ note, busy, place: (action, target) => mutate(async () => {
+        updateNote(await edit(saved.current?.olympHeads, 'placeNote', id, action, target));
+      }) })}
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="font-semibold">Images</h2>
@@ -176,9 +182,9 @@ export function NoteEditor({ id, initial, onChanged, notes }) {
       </section>
       <section className="space-y-3">
         <h2 className="font-semibold">Related records</h2>
-        {!!note?.related.length && (
+        {!!related.length && (
           <ul className="space-y-1">
-            {note.related.map((ref) => (
+            {related.map((ref) => (
               <li key={JSON.stringify([ref.kind, ref.id])} className="flex items-center justify-between gap-2">
                 {ref.kind === 'note' && ref.label
                   ? <Link className="link" to={`/notes/${ref.id}`}>{ref.label}</Link>

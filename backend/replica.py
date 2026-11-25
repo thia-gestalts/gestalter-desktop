@@ -4,13 +4,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 
-from store import Store, identity
-
-
-READS = {"listNotes": "list_notes", "getNote": "note", "getImage": "image",
-         "recentPractice": "recent_practice"}
-WRITES = {"saveNote": "edit_note", "deleteNote": "delete_note", "link": "link",
-          "attachImage": "attach_image", "detachImage": "detach_image", "importPractice": "import_practice"}
+from store import READS, WRITES, Store, identity
 
 
 class AccountStore(Store):
@@ -44,10 +38,17 @@ class AccountStore(Store):
             yield  # The proposed editor change runs inside prepare's savepoint.
 
     def put(self, record):
-        key = identity(record)
+        self.track(*identity(record))
+        super().put(record)
+
+    def delete(self, kind, id):
+        self.track(kind, id)
+        super().delete(kind, id)
+
+    def track(self, kind, id):
+        key = (kind, id)
         if self.changes is not None and key not in self.changes:
             self.changes[key] = self.get(*key)
-        super().put(record)
 
     def prepare(self, method, args):
         """Run normal validation/edit logic, describe its writes, then roll back.
@@ -56,8 +57,6 @@ class AccountStore(Store):
         self.db.execute("SAVEPOINT proposal")
         self.changes = {}
         try:
-            if method == "deleteNote":
-                self.changes["note", args[0]] = self.require_note(args[0])
             result = getattr(self, WRITES[method])(*args)
             changes = []
             for (kind, id), old in self.changes.items():
@@ -86,7 +85,7 @@ class AccountStore(Store):
                 if previous and kind == "note":
                     cleanup.update(r["id"] for r in previous.get("attachments", []))
                 if value is None:
-                    self.db.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, id))
+                    self.delete(kind, id)
                     continue
                 for image in images:
                     data = base64.b64decode(image["data"], validate=True)

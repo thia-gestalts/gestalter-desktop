@@ -8,6 +8,7 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from store import Store
+from inbox import read_folder
 
 
 FIXTURE = Path(__file__).with_name("fixtures") / "records.json"
@@ -91,3 +92,70 @@ class StorageTest(unittest.TestCase):
             self.store.image(attached["id"])
         self.store.delete_note(first)
         self.assertIsNone(self.store.note(first))
+
+    def test_zettelkasten_reports_inconsistent_placements(self):
+        def place(id, relation="follows"):
+            return {"kind": "note", "id": id, "relation": relation}
+
+        with self.store.transaction():
+            for id, fields in {
+                "root": {"tags": ["zettelkasten-root"], "related": [place("unplaced")]},
+                "zroot": {"tags": ["zettelkasten-root"]},
+                "first": {"related": [place("root"), place("unplaced")]},
+                "second": {"tags": ["no-zettelkasten"], "related": [place("root")]},
+                "branch": {"related": [place("root", "branches from")]},
+                "cycle1": {"related": [place("cycle2")]},
+                "cycle2": {"related": [place("cycle1", "branches from")]},
+                "dangling": {"related": [place("missing")]},
+                "downstream": {"related": [place("dangling")]},
+                "excluded": {"tags": ["no-zettelkasten"]},
+                "onExcluded": {"related": [place("excluded")]},
+                "unplaced": {},
+                "onUnplaced": {"related": [place("unplaced")]},
+            }.items():
+                self.store.put({"kind": "note", "id": id, "text": id, **fields})
+
+        outline = self.store.zettelkasten()
+        self.assertEqual(outline["rows"], ["root", "branch", "first", "second"])
+        rows = {entry["id"]: entry for entry in outline["entries"]}
+        self.assertEqual(rows["branch"]["depth"], 1)
+        self.assertEqual(rows["second"]["depth"], 0)
+        self.assertEqual(rows["downstream"]["status"], "floating")
+        self.assertEqual(rows["cycle2"]["status"], "floating")
+        self.assertEqual(
+            {id: {mark["kind"] for mark in row["marks"]} for id, row in rows.items() if row["marks"]},
+            {"root": {"rootPlaced"}, "zroot": {"extraRoot"}, "first": {"placedTwice"},
+             "second": {"fork", "excludedPlaced"}, "cycle1": {"cycle"}, "dangling": {"parentMissing"},
+             "onExcluded": {"parentExcluded"}, "onUnplaced": {"parentUnplaced"}},
+        )
+
+        with self.assertRaisesRegex(ValueError, "cycle"):
+            self.store.place_note("first", "branches from", "first")
+        with self.assertRaisesRegex(ValueError, "already follows"):
+            self.store.place_note("unplaced", "follows", "root")
+        self.store.link("branch", "note", "root")
+        self.store.link("branch", "note", "root", True)
+        self.assertEqual(self.store.get("note", "branch")["related"], [place("root", "branches from")])
+
+    def test_inbox_keys_by_filename_and_bytes(self):
+        source = Path(self.directory.name) / "source"
+        source.mkdir()
+        first = source / "first.txt"
+        first.write_bytes(b"Same text")
+        (source / "second.txt").write_bytes(b"Same text")
+        self.assertEqual(self.store.import_inbox(read_folder(source)["files"]), {"added": 2, "duplicates": 0})
+        first.write_bytes(b"\xef\xbb\xbfSame text")
+        self.assertEqual(self.store.import_inbox(read_folder(source)["files"]), {"added": 1, "duplicates": 1})
+
+        item = next(entry for entry in self.store.list_inbox() if entry["name"] == "second.txt")
+        note_id = str(uuid4())
+        self.store.edit_note(note_id, "A note from the inbox", True, item["id"])
+        self.store.defer_inbox(item["id"])
+        self.reopen()
+        self.assertEqual(self.store.list_inbox()[-1]["id"], item["id"])
+        self.assertEqual(self.store.inbox_item(item["id"])["notes"], [
+            {"id": note_id, "title": "A note from the inbox"},
+        ])
+        self.store.remove_inbox(item["id"])
+        self.assertEqual(self.store.note(note_id)["text"], "A note from the inbox")
+        self.assertEqual(self.store.import_inbox(read_folder(source)["files"]), {"added": 1, "duplicates": 1})
