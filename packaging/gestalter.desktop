@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Gestalter
+Comment=Write notes and revisit practice
+Exec=gestalter
+Terminal=false
+Categories=Education;Office;

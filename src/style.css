@@ -1,0 +1,35 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: false;
+}
+@plugin "daisyui/theme" {
+  name: "gestalter";
+  default: true;
+  color-scheme: light;
+  --color-base-100: #ffffff;
+  --color-base-200: #f5f6f2;
+  --color-base-300: #e0e5de;
+  --color-base-content: #202923;
+  --color-primary: #2a5c47;
+  --color-primary-content: #ffffff;
+  --color-error: #a53131;
+  --color-error-content: #ffffff;
+  --radius-box: 0.75rem;
+  --radius-field: 0.45rem;
+  --radius-selector: 0.45rem;
+}
+@layer base {
+  body { @apply bg-base-200 text-base-content antialiased; }
+}
+.nav-link { @apply rounded-md px-3 py-2 text-sm hover:bg-base-200; }
+.nav-link.active { @apply bg-base-200 font-semibold; }
+.markdown { @apply wrap-break-word leading-relaxed; }
+.markdown h1 { @apply mb-3 text-2xl font-semibold; }
+.markdown h2 { @apply mb-2 text-xl font-semibold; }
+.markdown h3 { @apply mb-2 text-lg font-semibold; }
+.markdown p, .markdown ul, .markdown ol, .markdown blockquote, .markdown pre { @apply mb-3; }
+.markdown ul { @apply list-disc pl-6; }
+.markdown ol { @apply list-decimal pl-6; }
+.markdown blockquote { @apply border-l-2 border-primary pl-3; }
+.markdown pre { @apply overflow-auto rounded bg-base-200 p-3; }
+.markdown code { @apply rounded bg-base-200 px-1; }
