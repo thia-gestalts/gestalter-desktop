@@ -4,4 +4,11 @@ run = "npm ci"
 
 [tasks.dev]
 description = "Build and launch Gestalter Desktop"
-run = "npm start"
+run = "OLYMP_ORIGIN=https://gestalter.koljasam.com npm start"
+
+[tasks.install]
+description = "Build and (re)install Gestalter Desktop on Fedora or Ubuntu"
+tools = { node = "24", uv = "latest" }
+dir = "{{config_root}}"
+interactive = true
+run = "sh packaging/install.sh"
