@@ -1,9 +1,36 @@
+import { registerEditorFlush } from './editorFlush';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useBlocker, useNavigate } from 'react-router-dom';
 import { ImagePlus, Save, Trash2, Unlink } from 'lucide-react';
-import Markdown from 'react-markdown';
-import { FilePicker, imagePayload } from './native-files';
-import { call, edit, registerEditorFlush } from './storage';
+import { MarkdownEditor } from '../../dumb/MarkdownEditor';
+import { NoteCard } from './NoteCard';
+import { FilePicker, imagePayload } from '../../dumb/native-files';
+import { useRead } from '../../entities/workspace/useRead';
+import { call, edit } from '../../entities/workspace/storage';
+
+const fields = (note) => ({
+  title: typeof note?.title === 'string' ? note.title : '',
+  text: typeof note?.text === 'string' ? note.text : '',
+  extra: typeof note?.extra === 'string' ? note.extra : '',
+  aliases: note?.aliases ?? [],
+  tags: note?.tags ?? [],
+});
+
+function ListField({ label, values, onChange }) {
+  const [input, setInput] = useState('');
+  return <div className="flex flex-wrap items-center gap-2">
+    <span className="font-medium">{label}</span>
+    {values.map((value, index) => <button key={index} type="button" className="btn btn-sm"
+      aria-label={`Remove ${value}`} onClick={() => onChange(values.filter((_, item) => item !== index))}>{value} ×</button>)}
+    <input className="input input-sm" aria-label={`Add ${label.toLowerCase()}`} value={input}
+      onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => {
+        if (event.key !== 'Enter' || !input.trim()) return;
+        event.preventDefault();
+        onChange([...new Set([...values, input.trim()])]);
+        setInput('');
+      }} />
+  </div>;
+}
 
 function Image({ image, disabled, onRemove }) {
   const [src, setSrc] = useState('');
@@ -31,19 +58,25 @@ function Image({ image, disabled, onRemove }) {
   );
 }
 
-export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId, returnTo = '/notes', renderActions }) {
+export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId, returnTo = '/notes' }) {
   const navigate = useNavigate();
   const [note, setNote] = useState(initial);
-  const [text, setText] = useState(initial?.text ?? '');
+  const [values, setValues] = useState(() => fields(initial));
+  const { title, text, extra, aliases, tags } = values;
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [target, setTarget] = useState('');
+  const { value: results } = useRead('linkTargets', target ? target : undefined);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const saved = useRef(initial);
-  const draft = useRef(initial?.text ?? '');
+  const draft = useRef(fields(initial));
+  const change = (field, value) => {
+    draft.current = { ...draft.current, [field]: value };
+    setValues(draft.current);
+  };
   const queue = useRef(Promise.resolve(true));
-  const dirty = () => draft.current !== (saved.current?.text ?? '');
+  const dirty = () => JSON.stringify(draft.current) !== JSON.stringify(fields(saved.current));
   const blocker = useBlocker(() => dirty() || (saved.current !== null && busy));
 
   const updateNote = useCallback((next) => {
@@ -70,9 +103,12 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
   }, []);
 
   const save = useCallback(async () => {
-    const value = draft.current;
-    if (value === (saved.current?.text ?? '') || (!saved.current && !value.trim())) return;
-    const args = [id, value, !saved.current];
+    const previous = fields(saved.current);
+    const patch = Object.fromEntries(Object.entries(draft.current)
+      .filter(([field, value]) => JSON.stringify(value) !== JSON.stringify(previous[field])));
+    if (!Object.keys(patch).length || (!saved.current && !Object.values(patch).some((value) =>
+      Array.isArray(value) ? value.length : value.trim()))) return;
+    const args = [id, patch, !saved.current];
     if (!saved.current && (inboxId || artifactId)) args.push(inboxId ?? null, artifactId ?? null);
     updateNote(await edit(saved.current?.olympHeads, 'saveNote', ...args));
   }, [id, inboxId, artifactId, updateNote]);
@@ -98,7 +134,8 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
   const remove = async () => {
     const removed = await enqueue(async () => {
       await edit(saved.current?.olympHeads, 'deleteNote', id);
-      draft.current = '';
+      draft.current = fields(null);
+      setValues(draft.current);
       updateNote(null);
     });
     setConfirmDelete(false);
@@ -109,18 +146,23 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
     && !related.some((ref) => ref.kind === 'note' && ref.id === candidate.id));
 
   return (
-    <section className="min-w-0 space-y-5 p-5 md:p-8" aria-label="Note editor">
+    <section className="min-w-0 space-y-3 p-3 text-sm" aria-label="Note editor" onKeyDown={(event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault();
+        void flush();
+      }
+    }}>
       <div className="flex flex-wrap items-center gap-2">
         {returnTo === '/notes' && <Link to="/notes" className="btn btn-ghost btn-sm md:hidden">All notes</Link>}
         <div className="join">
-          <button type="button" className={`btn btn-sm join-item ${!preview ? 'btn-active' : ''}`}
+          <button type="button" className={`btn btn-sm ${!preview ? 'btn-active' : ''}`}
             aria-pressed={!preview} onClick={() => setPreview(false)}>Write</button>
-          <button type="button" className={`btn btn-sm join-item ${preview ? 'btn-active' : ''}`}
+          <button type="button" className={`btn btn-sm ${preview ? 'btn-active' : ''}`}
             aria-pressed={preview} onClick={() => setPreview(true)}>Preview</button>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-base-content/65" role="status">
-            {busy ? 'Saving…' : text !== (note?.text ?? '') ? 'Unsaved' : note ? 'Saved' : ''}
+            {busy ? 'Saving…' : dirty() ? 'Unsaved' : note ? 'Saved' : ''}
           </span>
           <button type="button" className="btn btn-primary btn-sm" onClick={flush}
             disabled={busy || !dirty()}><Save size={16} /> Save</button>
@@ -132,8 +174,8 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
         <div role="alert" className="alert alert-error">
           <span>{error}</span>
           {dirty() && <button type="button" className="btn btn-sm" onClick={() => {
-            draft.current = saved.current?.text ?? '';
-            setText(draft.current);
+            draft.current = fields(saved.current);
+            setValues(draft.current);
             setError('');
           }}>Discard draft changes</button>}
         </div>
@@ -147,25 +189,23 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
           </div>
         </div>
       )}
+      {!preview && <input className="input input-sm w-full" aria-label="Title" placeholder="Title" value={title}
+        autoFocus onChange={(event) => change('title', event.target.value)} onBlur={() => { if (dirty()) void flush(); }} />}
       {preview ? (
-        <div className="markdown min-h-58 rounded-xl border border-base-300 bg-base-100 p-4" aria-label="Markdown preview">
-          <Markdown skipHtml disallowedElements={['img', 'a']} unwrapDisallowed>{text || 'Nothing to preview yet.'}</Markdown>
-        </div>
+        <div aria-label="Markdown preview"><NoteCard note={values} /></div>
       ) : (
-        <textarea className="textarea min-h-58 w-full resize-y rounded-xl font-mono text-sm leading-relaxed"
-          aria-label="Note Markdown" placeholder={'# Note title\n\nWrite in Markdown…'} value={text}
-          onChange={(event) => { draft.current = event.target.value; setText(draft.current); }}
-          onBlur={() => { if (dirty()) void flush(); }}
-          onKeyDown={(event) => {
-            if ((event.ctrlKey || event.metaKey) && event.key === 's') {
-              event.preventDefault();
-              void flush();
-            }
-          }} />
+        <MarkdownEditor label="Note Markdown" hint="Main" value={text}
+          onChange={(value) => change('text', value)} onBlur={() => { if (dirty()) void flush(); }}
+          onFiles={attach} search={(query) => choices.filter((candidate) =>
+            candidate.title.toLowerCase().includes(query.toLowerCase())).slice(0, 20)}
+          onOpen={(target) => { if (notes.some((candidate) => candidate.id === target)) navigate(`/notes/${target}`); }} />
       )}
-      {renderActions?.({ note, busy, place: (action, target) => mutate(async () => {
-        updateNote(await edit(saved.current?.olympHeads, 'placeNote', id, action, target));
-      }) })}
+      {!preview && <>
+        <MarkdownEditor label="Extra" hint="Extra" compact value={extra}
+          onChange={(value) => change('extra', value)} onBlur={() => { if (dirty()) void flush(); }} />
+        <ListField label="Aliases" values={aliases} onChange={(next) => { change('aliases', next); void flush(); }} />
+        <ListField label="Tags" values={tags} onChange={(next) => { change('tags', next); void flush(); }} />
+      </>}
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="font-semibold">Images</h2>
@@ -186,9 +226,16 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
           <ul className="space-y-1">
             {related.map((ref) => (
               <li key={JSON.stringify([ref.kind, ref.id])} className="flex items-center justify-between gap-2">
-                {ref.kind === 'note' && ref.label
-                  ? <Link className="link" to={`/notes/${ref.id}`}>{ref.label}</Link>
+                {ref.label && ['note', 'artifact'].includes(ref.kind)
+                  ? <Link className="link" to={`/${ref.kind === 'note' ? 'notes' : 'sources'}/${encodeURIComponent(ref.id)}`}>{ref.label}</Link>
                   : <span className="break-all">{ref.label ?? `Unavailable · ${ref.id}`}</span>}
+                <input className="input input-sm" aria-label={`Relationship to ${ref.label ?? ref.id}`}
+                  placeholder="Related" defaultValue={ref.relation ?? ''} key={ref.relation ?? ''}
+                  onBlur={(event) => {
+                    const relation = event.currentTarget.value.trim();
+                    if (relation !== (ref.relation ?? '')) void mutate(async () =>
+                      updateNote(await edit(saved.current?.olympHeads, 'link', id, ref.kind, ref.id, false, relation)));
+                  }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />
                 <button type="button" className="btn btn-ghost btn-square btn-sm" aria-label="Remove relationship"
                   disabled={busy} onClick={() => mutate(async () => updateNote(await edit(saved.current?.olympHeads, 'link', id, ref.kind, ref.id, true)))}>
                   <Unlink size={16} />
@@ -197,19 +244,22 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
             ))}
           </ul>
         )}
-        {!!choices.length && (
-          <div className="flex gap-2">
-            <select className="select select-sm" aria-label="Related note" value={target}
-              onChange={(event) => setTarget(event.target.value)}>
-              <option value="">Choose a note</option>
-              {choices.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}
-            </select>
-            <button type="button" className="btn btn-sm" disabled={!target || busy} onClick={() => mutate(async () => {
-              updateNote(await edit(saved.current?.olympHeads, 'link', id, 'note', target));
-              setTarget('');
-            })}>Link note</button>
-          </div>
-        )}
+        <label className="flex flex-col gap-1">
+          <span>Link a record</span>
+          <input className="input input-sm" type="search" value={target} placeholder="Search notes, sources, and topics"
+            onChange={(event) => setTarget(event.target.value)} />
+        </label>
+        {target && <ul className="max-h-48 overflow-y-auto">
+          {results?.filter((candidate) => (candidate.kind !== 'note' || candidate.id !== id)
+            && !related.some((ref) => ref.kind === candidate.kind && ref.id === candidate.id))
+            .map((candidate) => <li key={`${candidate.kind}:${candidate.id}`}>
+              <button type="button" className="w-full px-2 py-1 text-start hover:bg-base-200" disabled={busy}
+                onClick={() => mutate(async () => {
+                  updateNote(await edit(saved.current?.olympHeads, 'link', id, candidate.kind, candidate.id));
+                  setTarget('');
+                })}>{candidate.label} <span className="text-xs text-base-content/60">{candidate.kind}</span></button>
+            </li>)}
+        </ul>}
       </section>
     </section>
   );

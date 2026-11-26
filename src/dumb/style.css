@@ -1,0 +1,49 @@
+@import "tailwindcss" source(none);
+@source "../";
+
+@theme {
+  --color-base-100: #ffffff;
+  --color-base-200: #f5f6f2;
+  --color-base-300: #e0e5de;
+  --color-base-content: #202923;
+  --color-primary: #2a5c47;
+  --color-primary-content: #ffffff;
+  --color-error: #a53131;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-md border border-base-300 bg-base-100 px-3 py-2 font-medium hover:bg-base-200 disabled:cursor-default disabled:opacity-50;
+}
+@utility btn-sm { @apply px-2 py-1 text-sm; }
+@utility btn-square { @apply aspect-square; }
+@utility btn-ghost { @apply border-transparent bg-transparent; }
+@utility btn-primary { @apply border-primary bg-primary text-primary-content hover:bg-primary/90; }
+@utility btn-error { @apply border-error bg-error text-white hover:bg-error/90; }
+@utility btn-active { @apply bg-base-300; }
+@utility input {
+  @apply rounded-md border border-base-300 bg-base-100 px-3 py-2;
+  & input { @apply min-w-0 flex-1; }
+}
+@utility input-sm { @apply px-2 py-1 text-sm; }
+@utility select { @apply rounded-md border border-base-300 bg-base-100 px-2 py-2; }
+@utility select-sm { @apply py-1 text-sm; }
+@utility textarea { @apply rounded-md border border-base-300 bg-base-100 p-2; }
+@utility join { @apply inline-flex gap-1; }
+@utility alert { @apply flex flex-wrap items-center gap-2 rounded-md border border-base-300 p-3; }
+@utility alert-error { @apply border-error/40 text-error; }
+@utility link { @apply underline underline-offset-2; }
+@layer base {
+  body { @apply bg-base-200 text-base-content antialiased; }
+}
+.nav-link { @apply rounded-md px-3 py-2 text-sm hover:bg-base-200; }
+.nav-link.active { @apply bg-base-200 font-semibold; }
+.markdown { @apply wrap-break-word leading-relaxed; }
+.markdown h1 { @apply mb-3 text-2xl font-semibold; }
+.markdown h2 { @apply mb-2 text-xl font-semibold; }
+.markdown h3 { @apply mb-2 text-lg font-semibold; }
+.markdown p, .markdown ul, .markdown ol, .markdown blockquote, .markdown pre { @apply mb-3; }
+.markdown ul { @apply list-disc pl-6; }
+.markdown ol { @apply list-decimal pl-6; }
+.markdown blockquote { @apply border-l-2 border-primary pl-3; }
+.markdown pre { @apply overflow-auto rounded bg-base-200 p-3; }
+.markdown code { @apply rounded bg-base-200 px-1; }

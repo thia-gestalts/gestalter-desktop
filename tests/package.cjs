@@ -36,7 +36,7 @@ async function main() {
       GESTALTER_PYTHON: '/unused-in-the-package',
     };
     const start = () => _electron.launch({
-      executablePath, env, timeout: 15000, chromiumSandbox: true,
+      executablePath, env, timeout: 15000, chromiumSandbox: process.env.GESTALTER_TEST_SANDBOX !== '0',
       args: ['--ozone-platform=x11'],
     });
     app = await start();
@@ -59,9 +59,9 @@ async function main() {
     await importFile.setInputFiles({ name: 'records.json', mimeType: 'application/json', buffer: fixture });
     const skill = page.getByText('Round to the nearest ten', { exact: true });
     await skill.waitFor();
-    assert.equal(await skill.locator('xpath=../..').locator('time').getAttribute('datetime'),
+    assert.equal(await skill.locator('xpath=ancestor::li').locator('time').getAttribute('datetime'),
       '2025-10-09T08:53:20.000Z');
-    assert.equal(await page.getByText('Bézier Curves', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('Bézier Curves', { exact: true }).isVisible(), false);
 
     await page.getByRole('link', { name: 'Notes', exact: true }).click();
     await page.getByRole('link', { name: 'New note' }).click();
@@ -90,7 +90,7 @@ async function main() {
     await page.getByRole('searchbox').fill('on close');
     await page.getByRole('link', { name: 'Rounding notes' }).click();
     const reopened = page.getByRole('textbox', { name: 'Note Markdown' });
-    assert.equal(await reopened.inputValue(), updated);
+    assert.equal(await reopened.locator(':scope > .cm-line').allTextContents().then((lines) => lines.join('\n')), updated);
     const image = page.getByRole('img', { name: 'pixel.png' });
     assert.equal(await image.getAttribute('src'), `data:image/png;base64,${png.toString('base64')}`);
     await page.getByRole('button', { name: 'Remove image' }).click();

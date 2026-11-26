@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol } = require('electron');
 const path = require('node:path');
+const { randomBytes } = require('node:crypto');
 const { mkdtemp, readFile, rename, rm, writeFile } = require('node:fs/promises');
 const { StorageClient } = require('./client.cjs');
 const { pythonCommand } = require('./platform.cjs');
@@ -46,6 +47,12 @@ async function asset(request) {
   }
   try {
     const file = await readFile(path.join(app.getAppPath(), 'dist', pathname.slice(1)));
+    if (pathname === '/index.html') {
+      const nonce = randomBytes(24).toString('base64');
+      return new Response(file.toString().replaceAll('GESTALTER_STYLE_NONCE', nonce), {
+        headers: { 'Content-Type': 'text/html' },
+      });
+    }
     return new Response(file, { headers: { 'Content-Type': contentTypes[path.extname(pathname)] } });
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
@@ -54,10 +61,10 @@ async function asset(request) {
 }
 
 const methods = new Set([
-  'listNotes', 'getNote', 'saveNote', 'deleteNote', 'link',
-  'attachImage', 'detachImage', 'getImage', 'account', 'serviceOrigin', 'importPractice', 'recentPractice',
+  'listNotes', 'linkTargets', 'getNote', 'saveNote', 'deleteNote', 'link',
+  'attachImage', 'detachImage', 'getImage', 'account', 'serviceOrigin', 'importPractice', 'recentPractice', 'learningHistory',
   'zettelkasten', 'placeNote', 'pickInboxFolder', 'importInbox', 'listInbox', 'getInboxItem', 'deferInbox', 'removeInbox',
-  'previewBibtex', 'sourceLibrary', 'sourceLinks', 'importSources', 'saveSource', 'reconcileSource', 'addAnnotation',
+  'previewBibtex', 'sourceLibrary', 'sourceLinks', 'sourceDetails', 'importSources', 'saveSource', 'deleteSource', 'editSourceLinks', 'reconcileSource', 'addAnnotation',
   'exportBibtex', 'saveBibtexFile',
 ]);
 

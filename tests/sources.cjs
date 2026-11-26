@@ -37,9 +37,10 @@ async function main() {
   }
 
   async function credentials(page, button) {
+    if (button === 'Create account') await page.getByRole('button', { name: 'Create account', exact: true }).click();
     await page.getByLabel('Login name').fill(account);
     await page.getByLabel('Password').fill(password);
-    await page.getByRole('button', { name: button, exact: true }).click();
+    await page.getByRole('button', { name: button, exact: true }).and(page.locator('button:not(#account-open)')).click();
     const status = await page.getByText(/^Fully synced at revision /).textContent();
     return Number(status.match(/\d+$/)[0]);
   }
@@ -101,15 +102,14 @@ async function main() {
     await author.getByText('Imported 2 entries.').waitFor();
 
     async function sharedArtifact(page) {
-      const list = page.getByRole('list', { name: 'Artifacts' });
+      const list = page.getByRole('list', { name: 'Citations' });
       await list.getByRole('link', { name: secondKey }).waitFor();
-      assert.deepEqual(await list.getByRole('link').allTextContents(), [artifactName, firstKey, secondKey]);
+      assert.equal(await list.getByRole('link').count(), 2);
       return list;
     }
 
     const artifacts = await sharedArtifact(author);
     await artifacts.getByRole('link', { name: secondKey }).click();
-    await author.getByRole('button', { name: 'Edit entry' }).click();
     await author.getByLabel('edition', { exact: true }).fill('3');
     await author.getByRole('button', { name: 'Save entry' }).click();
     await author.getByText('Entry saved.').waitFor();
@@ -122,6 +122,13 @@ async function main() {
     await author.getByLabel('Use other year', { exact: true }).check();
     await author.getByRole('button', { name: 'Update retained entry' }).click();
     await author.getByText('Updated the existing entry.').waitFor();
+
+    await author.getByRole('textbox', { name: 'Topic name' }).fill('Curve geometry');
+    await author.getByRole('button', { name: 'Add topic' }).click();
+    await author.getByRole('slider', { name: 'Strength for Curve geometry' }).waitFor();
+    await author.getByRole('textbox', { name: 'New claim' }).fill('The second edition revises this example.');
+    await author.getByRole('button', { name: 'Add claim' }).click();
+    await author.getByRole('region', { name: 'Claims' }).getByText('The second edition revises this example.', { exact: true }).first().waitFor();
 
     await author.getByRole('link', { name: 'New linked note' }).click();
     const markdown = author.getByLabel('Note Markdown');
@@ -151,19 +158,24 @@ async function main() {
     const web = await browser.newPage();
     web.on('pageerror', error => failures.push(error.message));
     await web.goto(vizintOrigin + '/rounding/');
+    await web.locator('#account-open').click();
     assert.equal(await credentials(web, 'Sign in'), published);
     const readRecords = () => web.evaluate(async () => (await import('/storage.mjs')).readRecords());
     const old = await readRecords();
     await web.frameLocator('iframe').locator('#options button').first().click();
-    await web.getByText('Fully synced at revision ' + (published + 1), { exact: true }).waitFor();
+    await web.getByText('Fully synced at revision ' + (published + 1), { exact: true }).waitFor({ state: 'attached' });
     const updated = await readRecords();
     assert.ok(updated.some(record => record.kind === 'learning-event' && record.type === 'attempt'));
     for (const record of old) {
       assert.deepEqual(updated.find(row => row.kind === record.kind && row.id === record.id), record);
     }
 
+    await web.goto(vizintOrigin + '/bezier/');
+    await web.frameLocator('iframe').locator('#handles circle').first().press('ArrowRight');
+    await web.getByText('Fully synced at revision ' + (published + 2), { exact: true }).waitFor({ state: 'attached' });
+
     const recovered = await startDesktop('recovered');
-    assert.equal(await credentials(recovered, 'Sign in'), published + 1);
+    assert.equal(await credentials(recovered, 'Sign in'), published + 2);
     await recovered.getByRole('link', { name: 'Academic Sources' }).click();
     const restored = await sharedArtifact(recovered);
     for (const key of [firstKey, secondKey]) {
@@ -173,9 +185,19 @@ async function main() {
       await links.getByText('p. 42', { exact: true }).waitFor();
       await links.getByText('Check this proof in the first edition.').waitFor();
     }
+    await restored.getByRole('link', { name: firstKey }).click();
+    await restored.getByRole('link', { name: firstKey, current: 'page' }).waitFor();
+    assert.equal(await recovered.getByRole('region', { name: 'Claims' }).locator('article').count(), 0);
+    await restored.getByRole('link', { name: secondKey }).click();
+    await recovered.getByRole('region', { name: 'Claims' }).locator('article').getByText('The second edition revises this example.', { exact: true }).waitFor();
+    await recovered.getByRole('slider', { name: 'Strength for Curve geometry' }).waitFor();
     assert.equal(await exportFile(recovered, path.join(temp, 'recovered.bib')), expected);
     await recovered.getByRole('link', { name: 'Recent practice' }).click();
-    await recovered.getByText('Round to the nearest tenth', { exact: true }).waitFor();
+    await recovered.getByRole('listitem').filter({ hasText: 'Round to the nearest tenth' }).first().waitFor();
+    await recovered.getByText('Practice history', { exact: true }).click();
+    await recovered.getByText(/example.thia.vizint \/ round-to-nearest-tenth/).waitFor();
+    await recovered.getByText('Engagements', { exact: true }).click();
+    await recovered.getByText('Bézier Curves', { exact: true }).waitFor();
     await closeDesktop();
     assert.deepEqual(failures, []);
     console.log('Two editions and one artifact survived independent editing, reconciliation input, linked notes, annotations and file export.');

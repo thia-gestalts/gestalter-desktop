@@ -1,16 +1,17 @@
+import { handleWindowClose } from './features/note-edit/editorFlush';
 import { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createHashRouter, Link, NavLink, Navigate, Outlet, RouterProvider, useLocation,
-  useOutletContext, useParams } from 'react-router-dom';
-import { Activity, NotebookPen, Plus, Search } from 'lucide-react';
-import { FilePicker } from './native-files';
-import { OpenNote, useRead } from './note-route';
-import { Inbox } from './Inbox';
-import { Sources } from './Sources';
-import { Zettelkasten } from './Zettelkasten';
-import { call, handleWindowClose } from './storage';
-import { Account, AccountStatus } from './Account';
-import './style.css';
+import { createHashRouter, Link, NavLink, Navigate, Outlet, RouterProvider } from 'react-router-dom';
+import { NotebookPen } from 'lucide-react';
+import { FilePicker } from './dumb/native-files';
+import { Notes } from './pages/notes/Notes';
+import { Practice } from './pages/practice/Practice';
+import { Inbox } from './pages/inbox/Inbox';
+import { Sources } from './pages/sources/Sources';
+import { Zettelkasten } from './pages/zettelkasten/Zettelkasten';
+import { call } from './entities/workspace/storage';
+import { Account, AccountStatus } from './pages/account/Account';
+import './dumb/style.css';
 
 function Frame() {
   const [revision, setRevision] = useState(0);
@@ -38,7 +39,7 @@ function Frame() {
     }
   };
   return (
-    <>
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-base-100">
       <header className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-base-300 bg-base-100 px-4 py-2 md:px-6">
         <Link to="/notes" className="flex items-center gap-2 text-lg font-semibold"><NotebookPen size={20} /> Gestalter</Link>
         <nav className="flex flex-wrap gap-1" aria-label="Workspace">
@@ -56,75 +57,8 @@ function Frame() {
       </header>
       {error && <p role="alert" className="alert alert-error">{error}</p>}
       {message && <p role="status" className="px-6 pt-3 text-sm">{message}</p>}
-      <Outlet context={{ revision, changed }} />
-    </>
-  );
-}
-
-function Notes() {
-  const { id } = useParams();
-  const { state } = useLocation();
-  const { revision, changed } = useOutletContext();
-  const [query, setQuery] = useState('');
-  const { value: found, error } = useRead('listNotes', query, revision);
-  const { value: all } = useRead('listNotes', '', revision);
-  const [newId, setNewId] = useState(() => crypto.randomUUID());
-  return (
-    <main className="grid min-h-[calc(100vh-3.5rem)] md:grid-cols-[17rem_minmax(0,1fr)]">
-      <aside className={`border-base-300 bg-base-100 px-4 py-5 md:block md:border-r ${id ? 'hidden' : ''}`}>
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold">Notes</h1>
-          <Link to={`/notes/${newId}`} state={{ draft: true }} className="btn btn-primary btn-sm"
-            onClick={() => setNewId(crypto.randomUUID())}><Plus size={16} /> New note</Link>
-        </div>
-        <label className="input input-sm mb-3 w-full">
-          <Search size={16} aria-hidden />
-          <input type="search" aria-label="Search notes" placeholder="Search notes" value={query}
-            onChange={(event) => setQuery(event.target.value)} />
-        </label>
-        {error && <p role="alert">{error}</p>}
-        {found && !found.length && <p className="px-2 py-3 text-sm text-base-content/65">{query ? 'No matching notes.' : 'No notes yet.'}</p>}
-        <ul className="space-y-1">
-          {found?.map((note) => (
-            <li key={note.id}><Link aria-current={note.id === id ? 'page' : undefined} to={`/notes/${note.id}`}
-              className={`block truncate rounded-md px-3 py-2 text-sm hover:bg-base-200 ${note.id === id ? 'bg-base-300 font-medium' : ''}`}>
-              {note.title}
-            </Link></li>
-          ))}
-        </ul>
-      </aside>
-      {id ? <OpenNote key={id} id={id} draft={Boolean(state?.draft)} notes={all ?? []} changed={changed} />
-        : <div className="hidden place-items-center text-base-content/65 md:grid">Select a note or create one.</div>}
-    </main>
-  );
-}
-
-function Practice() {
-  const { revision } = useOutletContext();
-  const { value: rows, error } = useRead('recentPractice', undefined, revision);
-  return (
-    <main className="mx-auto max-w-4xl px-5 py-8 md:px-8">
-      <h1 className="mb-5 flex items-center gap-3 text-2xl font-semibold"><Activity size={22} /> Recent practice</h1>
-      {error && <p role="alert" className="alert alert-error">{error}</p>}
-      {rows?.length === 0 && <p className="rounded-xl border border-base-300 bg-base-100 p-5 text-base-content/65">No practice recorded yet.</p>}
-      {!!rows?.length && (
-        <ul className="divide-y divide-base-300 rounded-xl border border-base-300 bg-base-100">
-          {rows.map((row) => {
-            const date = new Date(row.occurredAtMs);
-            return (
-              <li key={JSON.stringify([row.kind, row.id])} className="flex flex-wrap items-center justify-between gap-2 px-5 py-4">
-                <div>
-                  <p className="text-xs capitalize text-base-content/65">{row.kind}</p>
-                  <p className="font-medium">{row.label}</p>
-                </div>
-                {Number.isNaN(date.getTime()) ? <span>{row.occurredAtMs} ms UTC</span>
-                  : <time className="text-sm text-base-content/70" dateTime={date.toISOString()}>{date.toLocaleString()}</time>}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </main>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto"><Outlet context={{ revision, changed }} /></div>
+    </div>
   );
 }
 

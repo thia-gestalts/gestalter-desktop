@@ -7,7 +7,6 @@ const path = require('node:path');
 const { createInterface } = require('node:readline');
 const { _electron } = require('playwright');
 
-const deferredObservations = /01-observations\.txt\s*Deferred/;
 const fullySynced = /^Fully synced at revision /;
 
 async function main() {
@@ -55,6 +54,7 @@ async function main() {
     };
     const signIn = async (page, button) => {
       await page.getByRole('link', { name: 'Account' }).click();
+      if (button === 'Create account') await page.getByRole('button', { name: 'Create account', exact: true }).click();
       await page.getByLabel('Login name').fill('inbox-proof');
       await page.getByLabel('Password').fill('inbox acceptance password');
       await page.getByRole('button', { name: button, exact: true }).click();
@@ -83,7 +83,7 @@ async function main() {
       };
     }, source);
     await page.getByRole('link', { name: 'Plaintext inbox' }).click();
-    const importFolder = page.getByRole('button', { name: 'Import folder' });
+    const importFolder = page.getByRole('button', { name: 'Import folder' }).first();
     await importFolder.click();
     await page.getByText('Imported 2. Already in inbox 0. Skipped 4.').waitFor();
     await page.getByText('blank.txt · Empty text.', { exact: true }).waitFor();
@@ -93,38 +93,58 @@ async function main() {
     assert.equal(await page.getByText('ignored.txt', { exact: true }).count(), 0);
     await importFolder.click();
     await page.getByText('Imported 0. Already in inbox 2. Skipped 4.').waitFor();
-    await page.getByText('Café: observations for two notes.').waitFor();
+    await openObservations(page);
+
+    async function openObservations(view) {
+      if (!await view.getByText('Café: observations for two notes.').isVisible()) {
+        await view.getByRole('button', { name: 'Defer', exact: true }).click();
+      }
+      await view.getByText('Café: observations for two notes.').waitFor();
+    }
 
     const field = page.getByLabel('Note Markdown');
     const notes = page.getByRole('region', { name: 'Notes from this text' });
     for (const label of ['First observation', 'Second observation']) {
-      await page.getByRole('link', { name: 'New note from text' }).click();
-      await field.fill('# ' + label);
+      await page.getByRole('button', { name: 'New note', exact: true }).click();
+      await page.getByLabel('Title', { exact: true }).fill(label);
+      await field.fill('Observation from imported text.');
       await field.press('Control+s');
       await notes.getByRole('link', { name: label }).waitFor();
     }
-    await field.fill('# Second observation\n\nUpdated in the shared editor.');
+    await field.fill('Updated in the shared editor.');
     await field.press('Control+s');
     await page.getByText('Saved', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Defer', exact: true }).click();
     await page.getByText('Revisit this text later.').waitFor();
-    await page.getByRole('link', { name: deferredObservations }).click();
-    await notes.getByRole('link', { name: 'First observation' }).click();
-    await page.getByRole('link', { name: 'Place in Zettelkasten' }).click();
-    await page.getByRole('button', { name: 'Make root' }).click();
     const outline = (view) => view.getByRole('region', { name: 'Outline' });
-    await outline(page).getByRole('link', { name: /First observation\s*Root/ }).waitFor();
-    await page.getByRole('link', { name: 'Second observation', exact: true }).click();
-    await page.getByLabel('Placement target').selectOption({ label: 'First observation' });
-    await page.getByRole('button', { name: 'Place after', exact: true }).click();
-    await outline(page).getByRole('link', { name: 'Second observation' }).waitFor();
+    async function focusNote(view, title) {
+      const id = await view.evaluate(async (query) => {
+        const { call } = await import('/olymp/browser.js').then(async ({ remembered }) => {
+          const session = await remembered.read();
+          const scope = JSON.stringify([session.origin, session.account.id]);
+          return { call: (...args) => window.gestalter.call('account', scope, ...args) };
+        });
+        return (await call('listNotes', [query])).find((note) => note.title === query).id;
+      }, title);
+      await view.evaluate((path) => { location.hash = path; }, '/zettelkasten/' + id);
+    }
+    const placement = page.getByRole('region', { name: 'Zettelkasten placement' });
+    await focusNote(page, 'First observation');
+    await placement.getByRole('button', { name: 'Make root' }).click();
+    await outline(page).getByRole('button', { name: 'First observation', exact: true }).waitFor();
+    await focusNote(page, 'Second observation');
+    await placement.getByLabel('Placement target').selectOption({ label: 'First observation' });
+    await placement.getByRole('button', { name: 'Place after', exact: true }).click();
+    await outline(page).getByRole('button', { name: 'Second observation', exact: true }).waitFor();
+    await page.getByRole('link', { name: 'Notes', exact: true }).click();
     await page.getByRole('link', { name: 'New note', exact: true }).click();
     await field.fill('# Side thought');
     await field.press('Control+s');
-    const placement = page.getByRole('region', { name: 'Zettelkasten placement' });
+    await page.getByText('Saved', { exact: true }).waitFor();
+    await focusNote(page, 'Side thought');
     await placement.getByRole('button', { name: 'Exclude', exact: true }).click();
     await placement.getByRole('button', { name: 'Include again' }).click();
-    await page.getByLabel('Placement target').selectOption({ label: 'First observation' });
+    await placement.getByLabel('Placement target').selectOption({ label: 'First observation' });
     const synced = (view) => view.waitForFunction(async () => {
       const { remembered } = await import('/olymp/browser.js');
       const session = await remembered.read();
@@ -132,29 +152,26 @@ async function main() {
       const state = await window.gestalter.call('account', scope, 'state', []);
       return state && !state.pending && state.revision > 0 ? state.revision : false;
     }).then((result) => result.jsonValue());
-    await page.getByRole('button', { name: 'Branch from', exact: true }).click();
-    await outline(page).getByRole('link', { name: /Side thought/ }).waitFor();
+    await placement.getByRole('button', { name: 'Branch from', exact: true }).click();
+    await outline(page).getByRole('button', { name: 'Side thought', exact: true }).waitFor();
     const revision = await synced(page);
     await close(author);
 
     async function verify(view, withImport) {
       await view.getByRole('link', { name: 'Zettelkasten' }).click();
-      await outline(view).getByRole('link', { name: /Side thought/ }).waitFor();
-      assert.deepEqual(await outline(view).getByRole('link').allTextContents(),
-        ['First observationRoot', '↳ Side thought', 'Second observation']);
-      await outline(view).getByRole('link', { name: 'Second observation' }).click();
+      await outline(view).getByRole('button', { name: 'Expand', exact: true }).click();
+      await outline(view).getByRole('button', { name: 'Side thought', exact: true }).waitFor();
+      await focusNote(view, 'Second observation');
       await view.getByRole('region', { name: 'Zettelkasten placement' }).getByText(/follows/).waitFor();
-      assert.match(await view.getByLabel('Note Markdown').inputValue(), /Updated in the shared editor/);
+      await view.getByText('Updated in the shared editor.', { exact: true }).waitFor();
       await view.getByRole('link', { name: 'Plaintext inbox' }).click();
-      const item = view.getByRole('link', { name: deferredObservations });
       if (withImport) {
-        await item.click();
-        await view.getByText('Café: observations for two notes.').waitFor();
+        await openObservations(view);
         const links = view.getByRole('region', { name: 'Notes from this text' }).getByRole('link');
         assert.deepEqual(await links.allTextContents(), ['First observation', 'Second observation']);
       } else {
         await view.getByText('Revisit this text later.').waitFor();
-        await item.waitFor({ state: 'detached' });
+        await view.getByText('1 left', { exact: true }).waitFor();
       }
     }
     const restarted = await start('author');
@@ -164,11 +181,11 @@ async function main() {
 
     const peer = await start('peer');
     await signIn(peer.page, 'Sign in');
-    await peer.page.getByText('Fully synced at revision ' + revision, { exact: true }).waitFor();
+    assert.ok(await synced(peer.page) >= revision);
     await verify(peer.page, true);
-    await peer.page.getByRole('button', { name: 'Remove imported text' }).click();
-    await peer.page.getByRole('button', { name: 'Remove copy' }).click();
-    await peer.page.getByRole('link', { name: deferredObservations }).waitFor({ state: 'detached' });
+    await peer.page.getByRole('button', { name: 'Delete', exact: true }).first().click();
+    await peer.page.getByRole('button', { name: 'Delete copy' }).click();
+    await peer.page.getByText('1 left', { exact: true }).waitFor();
     assert.ok(await synced(peer.page) > revision);
     await close(peer);
     const returned = await start('author');

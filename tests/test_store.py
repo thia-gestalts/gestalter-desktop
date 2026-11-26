@@ -49,14 +49,37 @@ class StorageTest(unittest.TestCase):
         self.assertEqual(row["label"], "Round to the nearest ten")
         self.assertEqual(row["occurredAtMs"], 1760000000000)
         self.assertEqual(self.store.get("learning-event", attempt["id"])["score"], 0)
+        occurrences = {event["id"]: event for event in self.store.learning_history()}
+        self.assertEqual(len(occurrences), 2)
+        self.assertEqual(occurrences[attempt["id"]]["score"], 0)
+        self.assertTrue(any(ref["label"] == "Round to the nearest ten"
+                            for ref in occurrences[attempt["id"]]["targets"]))
+        self.assertNotIn("score", occurrences[engagement["id"]])
 
         later = {**attempt, "id": str(uuid4()), "occurredAtMs": 1760000090000,
-                 "targets": [{"kind": "skill", "id": skill["id"]}]}
+                 "targets": [{"kind": "skill", "id": skill["id"]}, *engagement["targets"]]}
         later.pop("score")
         self.store.import_practice(json.dumps([later]))
         self.reopen()
         self.assertEqual([row["occurredAtMs"] for row in self.store.recent_practice()],
                          [1760000090000, 1760000000000])
+        history = self.store.learning_history()
+        self.assertEqual(sum(event["type"] == "attempt" for event in history), 2)
+        self.assertTrue(any(
+            target["kind"] == "topic" and target["label"] == "Bézier Curves"
+            for event in history if event["id"] == later["id"] for target in event["targets"]
+        ))
+
+    def test_note_headline_uses_explicit_title_or_main_without_rewriting_main(self):
+        key = str(uuid4())
+        original = "\n> First observation\n\nBody"
+        self.store.edit_note(key, original, True)
+        self.assertEqual(self.store.list_notes()[0]["title"], "First observation")
+        updated = self.store.edit_note(key, {"title": "Explicit title", "aliases": ["nick"]})
+        self.assertEqual(updated["text"], original)
+        self.assertEqual(self.store.list_notes("nick")[0]["title"], "Explicit title")
+        self.store.edit_note(key, {"title": ""})
+        self.assertEqual(self.store.list_notes()[0]["title"], "First observation")
 
     def test_failed_import_rolls_back(self):
         rows = json.loads(FIXTURE.read_text())

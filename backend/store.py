@@ -17,18 +17,18 @@ MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_IMPORT_BYTES = 16 * 1024 * 1024
 
 READS = {
-    "listNotes": "list_notes", "getNote": "note", "getImage": "image",
-    "recentPractice": "recent_practice", "zettelkasten": "zettelkasten",
+    "listNotes": "list_notes", "linkTargets": "link_targets", "getNote": "note", "getImage": "image",
+    "recentPractice": "recent_practice", "learningHistory": "learning_history", "zettelkasten": "zettelkasten",
     "listInbox": "list_inbox", "getInboxItem": "inbox_item",
     "sourceLibrary": "source_library", "previewBibtex": "preview_bibtex",
-    "sourceLinks": "source_links", "exportBibtex": "export_bibtex",
+    "sourceLinks": "source_links", "sourceDetails": "source_details", "exportBibtex": "export_bibtex",
 }
 WRITES = {
     "saveNote": "edit_note", "deleteNote": "delete_note", "link": "link",
     "attachImage": "attach_image", "detachImage": "detach_image", "importPractice": "import_practice",
     "placeNote": "place_note", "importInbox": "import_inbox", "deferInbox": "defer_inbox",
     "removeInbox": "remove_inbox",
-    "importSources": "import_sources", "saveSource": "save_source",
+    "importSources": "import_sources", "saveSource": "save_source", "deleteSource": "delete_source", "editSourceLinks": "edit_source_links",
     "reconcileSource": "reconcile_source", "addAnnotation": "add_annotation",
 }
 
@@ -56,9 +56,14 @@ LIMIT 100
 """
 
 
-def title(text):
-    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
-    return re.sub(r"^#{1,6}\s+", "", first)[:120] or "Untitled note"
+def headline(note):
+    raw_title = note.get("title")
+    title = raw_title.strip() if isinstance(raw_title, str) else ""
+    if title:
+        return title
+    text = note.get("text")
+    first = next((line.strip() for line in text.splitlines() if line.strip()), "") if isinstance(text, str) else ""
+    return re.sub(r"^(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?|\d+[.)]\s+)", "", first)
 
 
 def media_type(data):
@@ -131,16 +136,20 @@ class Store:
         if target is None:
             return None
         if kind == "note":
-            return title(target["text"])
+            return headline(target)
         return target.get("name") or target.get("statement") or id
 
     def list_notes(self, query=""):
         rows = self.db.execute("""
-            SELECT id, body ->> '$.text' AS text FROM records
-            WHERE kind='note' AND instr(casefold(body ->> '$.text'), ?) > 0
+            SELECT id, body FROM records
+            WHERE kind='note' AND instr(casefold(
+                coalesce(body ->> '$.title', '') || char(10) ||
+                coalesce(body ->> '$.text', '') || char(10) ||
+                coalesce(body ->> '$.aliases', '')
+            ), ?) > 0
             ORDER BY rowid DESC
         """, (query.strip().casefold(),))
-        return [{"id": row["id"], "title": title(row["text"])} for row in rows]
+        return [{"id": row["id"], "title": headline(json.loads(row["body"]))} for row in rows]
 
     def note(self, id):
         record = self.get("note", id)
@@ -157,10 +166,15 @@ class Store:
         }
 
     def edit_note(self, id, text, create=False, inbox_id=None, artifact_id=None):
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("Write some Markdown before saving the note.")
-        if len(text) > 1_000_000:
-            raise ValueError("The note is too long.")
+        patch = {"text": text} if isinstance(text, str) else text
+        if not isinstance(patch, dict) or not patch.keys() <= {"title", "text", "extra", "aliases", "tags"}:
+            raise ValueError("Invalid note fields.")
+        for field, value in patch.items():
+            if field in ("aliases", "tags"):
+                if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+                    raise ValueError(f"Invalid {field}.")
+            elif not isinstance(value, str) or len(value) > 1_000_000:
+                raise ValueError(f"Invalid note {field}.")
         with self.transaction():
             record = self.get("note", id)
             if record is None and create:
@@ -176,7 +190,11 @@ class Store:
                     record["related"] = [self.artifact_reference(artifact_id)]
             if record is None:
                 raise ValueError("This note has been deleted.")
-            record["text"] = text
+            record.update(patch)
+            if not any(record.get(field, "").strip() for field in ("title", "text", "extra")) and not any(
+                record.get(field) for field in ("aliases", "tags", "attachments", "related")
+            ):
+                raise ValueError("Add some content before saving the note.")
             self.put(record)
         return self.note(record["id"])
 
@@ -193,17 +211,42 @@ class Store:
             for ref in record.get("attachments", []):
                 self.delete_unused_image(ref["id"])
 
-    def link(self, id, kind, target, remove=False):
+    def link_targets(self, query=""):
+        rows = self.db.execute("""
+            SELECT body FROM records
+            WHERE kind IN ('note', 'artifact', 'topic')
+            AND instr(casefold(body), ?) > 0
+            ORDER BY rowid DESC
+            LIMIT 50
+        """, (query.strip().casefold(),))
+        targets = []
+        for row in rows:
+            record = json.loads(row["body"])
+            label = headline(record) if record["kind"] == "note" else record["name"]
+            if label:
+                targets.append({"id": record["id"], "kind": record["kind"], "label": label})
+        return targets
+
+    def link(self, id, kind, target, remove=False, relation=None):
+        if relation is not None and (not isinstance(relation, str) or relation in (FOLLOWS, BRANCHES)):
+            raise ValueError("Choose a regular relationship label.")
         with self.transaction():
             record = self.require_note(id)
             refs = record.get("related", [])
             key = (kind, target)
             if remove:
                 refs = [ref for ref in refs if is_place(ref) or identity(ref) != key]
-            elif key != ("note", id) and all(is_place(ref) or identity(ref) != key for ref in refs):
-                if self.get(*key) is None:
-                    raise ValueError("This record is unavailable.")
-                refs.append({"kind": kind, "id": target})
+            elif key != ("note", id):
+                match = next((ref for ref in refs if not is_place(ref) and identity(ref) == key), None)
+                if match is None:
+                    if self.get(*key) is None:
+                        raise ValueError("This record is unavailable.")
+                    match = {"kind": kind, "id": target}
+                    refs.append(match)
+                if relation:
+                    match["relation"] = relation
+                elif relation == "":
+                    match.pop("relation", None)
             record["related"] = refs
             self.put(record)
         return self.note(id)
@@ -214,7 +257,7 @@ class Store:
         for row in rows:
             note = json.loads(row["body"])
             notes.append({
-                "id": note["id"], "title": title(note["text"]), "tags": note.get("tags", []),
+                "id": note["id"], "title": headline(note), "tags": note.get("tags", []),
                 "places": [{"id": ref["id"], "relation": ref["relation"]}
                            for ref in note.get("related", []) if is_place(ref)],
             })
@@ -344,7 +387,7 @@ class Store:
     def source_links(self, artifact_id):
         artifact = self.get("artifact", artifact_id)
         notes = self.db.execute("""
-            SELECT id, body ->> '$.text' AS text FROM records
+            SELECT id, body FROM records
             WHERE kind='note' AND EXISTS (
                 SELECT 1 FROM json_each(body, '$.related') ref
                 WHERE ref.value ->> '$.kind' = 'artifact' AND ref.value ->> '$.id' = ?
@@ -358,7 +401,7 @@ class Store:
         """, (artifact_id,))
         return {
             "artifact": artifact,
-            "notes": [{"id": row["id"], "title": title(row["text"])} for row in notes],
+            "notes": [{"id": row["id"], "title": headline(json.loads(row["body"]))} for row in notes],
             "annotations": [json.loads(row["body"]) for row in annotations],
         }
 
@@ -381,6 +424,16 @@ class Store:
                 self.put(artifact)
             ref = {"kind": "artifact", "id": artifact["id"]}
         record = previous or {"kind": academic.SOURCE, "id": str(uuid4())}
+        for field in ("aliases", "tags"):
+            if field in entry:
+                items = entry[field]
+                if not isinstance(items, list) or any(not isinstance(item, str) or not item.strip() for item in items):
+                    raise ValueError(f"Invalid {field}.")
+                values[field] = list(dict.fromkeys(items))
+        if "extra" in entry:
+            if not isinstance(entry["extra"], str):
+                raise ValueError("Invalid extra text.")
+            values["extra"] = entry["extra"]
         return {**record, **values, "artifact": ref}
 
     def import_sources(self, entries):
@@ -399,10 +452,69 @@ class Store:
 
     def save_source(self, snapshot, entry):
         with self.transaction():
-            source = self.source_record(entry, self.current_source(snapshot))
+            current = self.get(academic.SOURCE, snapshot["id"])
+            fields = ("citationKey", "bibtexType", "fields", "artifact", "aliases", "tags", "extra")
+            if current is None or any(current.get(field) != snapshot.get(field) for field in fields):
+                raise ValueError("This entry changed. Reopen it before saving.")
+            source = self.source_record(entry, current)
             self.check_source_keys([source], (row for row in self.list_sources() if row["id"] != source["id"]))
             self.put(source)
         return source
+
+    def source_details(self, id):
+        source = self.get(academic.SOURCE, id)
+        if source is None:
+            return None
+        return {
+            "claims": [note for key in source.get("claims", []) if (note := self.note(key)) is not None],
+            "topics": [
+                {"id": key, "strength": strength, "name": (self.get("topic", key) or {}).get("name", key)}
+                for key, strength in source.get("topics", {}).items()
+            ],
+        }
+
+    def edit_source_links(self, id, action, target, value=None):
+        with self.transaction():
+            source = self.get(academic.SOURCE, id)
+            if source is None:
+                raise ValueError("This citation is unavailable.")
+            if action in ("addClaim", "attachClaim", "detachClaim"):
+                claims = source.setdefault("claims", [])
+                if action == "addClaim":
+                    if not isinstance(value, str) or not value.strip() or len(value) > 1_000_000:
+                        raise ValueError("Write a claim before adding it.")
+                    key = UUID(target)
+                    if key.version != 4 or str(key) != target or self.get("note", target) is not None:
+                        raise ValueError("Invalid or occupied claim note ID.")
+                    self.put({"kind": "note", "id": target, "text": value})
+                elif action == "attachClaim":
+                    self.require_note(target)
+                if action == "detachClaim":
+                    source["claims"] = [key for key in claims if key != target]
+                elif target not in claims:
+                    claims.append(target)
+            elif action in ("addTopic", "setStrength", "detachTopic"):
+                topics = source.setdefault("topics", {})
+                if action == "addTopic":
+                    topic = {**academic.artifact_for(target), "kind": "topic"}
+                    target = topic["id"]
+                    if self.get("topic", target) is None:
+                        self.put(topic)
+                    topics.setdefault(target, 1)
+                elif action == "detachTopic":
+                    topics.pop(target, None)
+                elif target in topics and type(value) in (int, float) and 0 <= value <= 1:
+                    topics[target] = value
+                else:
+                    raise ValueError("Choose a linked topic and a strength between zero and one.")
+            else:
+                raise ValueError("Unknown citation action.")
+            self.put(source)
+
+    def delete_source(self, snapshot):
+        with self.transaction():
+            record = self.current_source(snapshot)
+            self.delete(academic.SOURCE, record["id"])
 
     def reconcile_source(self, snapshot, incoming, take_fields, take_key=False, take_type=False, stored=False):
         with self.transaction():
@@ -510,3 +622,18 @@ class Store:
 
     def recent_practice(self):
         return [dict(row) for row in self.db.execute(PRACTICE)]
+
+
+    def learning_history(self):
+        rows = self.db.execute("""
+            SELECT body FROM records WHERE kind='learning-event'
+            ORDER BY body ->> '$.occurredAtMs' DESC, id DESC
+        """)
+        events = []
+        for row in rows:
+            event = json.loads(row["body"])
+            event["targets"] = [
+                {**ref, "label": self.label(ref) or ref["id"]} for ref in event["targets"]
+            ]
+            events.append(event)
+        return events

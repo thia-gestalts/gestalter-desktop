@@ -10,9 +10,15 @@
     "package:linux": "npm run build && sh packaging/linux.sh",
     "test": "python3 -m unittest discover -s tests",
     "test:package": "node tests/package.cjs",
-    "test:package:storage": "node tests/package-storage.cjs"
+    "test:package:storage": "node tests/package-storage.cjs",
+    "lint": "node scripts/lint-layers.mjs"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
     "lucide-react": "1.61.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -21,9 +27,8 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
-    "daisyui": "5.7.50",
     "electron": "44.4.1",
-    "happy-dom": "20.14.5",
+    "esbuild": "0.28.2",
     "playwright": "1.65.0",
     "tailwindcss": "4.3.3",
     "vite": "7.3.7"

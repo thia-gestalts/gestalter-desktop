@@ -16,10 +16,10 @@ let replica;
 
 function visible(group) {
   if (!group) return;
-  // Concurrent spellings for one normalized artifact can share a display label.
+  // Concurrent names for one normalized artifact or topic can share a display label.
   // Leave both heads in the whole-base manifest.
   const versions = group.versions.length === 1 ? group.versions
-    : group.versions.filter(version => version.value?.kind === 'artifact')
+    : group.versions.filter(version => ['artifact', 'topic'].includes(version.value?.kind))
       .sort((a, b) => a.ids[0] < b.ids[0] ? -1 : 1);
   return versions.find(({ value, deleted }) => !deleted && projectionKinds.has(value?.kind)
     && typeof value.id === 'string' && value.id && sdk.recordKey(value) === group.key);
@@ -91,7 +91,7 @@ export async function logout() {
 
 const noteWrites = new Set(['saveNote', 'deleteNote', 'link', 'attachImage', 'detachImage', 'placeNote']);
 const writes = new Set([...noteWrites, 'importPractice', 'importInbox', 'deferInbox', 'removeInbox',
-  'importSources', 'saveSource', 'reconcileSource', 'addAnnotation']);
+  'importSources', 'saveSource', 'deleteSource', 'editSourceLinks', 'reconcileSource', 'addAnnotation']);
 export async function call(method, args, observed) {
   if (!session || method === 'pickInboxFolder' || method === 'saveBibtexFile')
     return window.gestalter.call(method, ...args);

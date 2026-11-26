@@ -1,8 +1,11 @@
-import { useState } from 'react';
-import { Link, useLocation, useOutletContext, useParams } from 'react-router-dom';
-import { FilePicker } from './native-files';
-import { OpenNote, useRead } from './note-route';
-import { call } from './storage';
+import { SourceConnections } from './SourceConnections';
+import { ClipboardPaste, Download, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import { FilePicker } from '../../dumb/native-files';
+import { WorkLinks } from './WorkLinks';
+import { useRead } from '../../entities/workspace/useRead';
+import { call } from '../../entities/workspace/storage';
 
 const sourcePath = id => '/sources/' + encodeURIComponent(id);
 
@@ -33,7 +36,7 @@ function Compare({ current, incoming, stored, busy, onCancel, onSave }) {
         {stored && ' Confirming also removes the other citation record. Both artifacts and their notes remain available.'}
       </p>
       <div className="overflow-x-auto">
-        <table className="table table-sm">
+        <table className="w-full border-collapse text-start text-sm [&_td]:border-b [&_td]:border-base-300 [&_td]:p-2 [&_th]:p-2 [&_th]:text-start">
           <thead><tr><th>Field</th><th>Retained entry</th><th>{stored ? 'Other entry' : 'Incoming entry'}</th><th>Use other value</th></tr></thead>
           <tbody>{rows.map(([key, label, before, after]) => (
             <tr key={key}>
@@ -58,7 +61,7 @@ function Compare({ current, incoming, stored, busy, onCancel, onSave }) {
   );
 }
 
-function ImportBibtex({ entries, busy, run }) {
+function ImportBibtex({ entries, busy, run, incoming }) {
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]);
   const [comparison, setComparison] = useState(null);
@@ -67,6 +70,39 @@ function ImportBibtex({ entries, busy, run }) {
     setComparison(null);
     setPending((await call('previewBibtex', input)).map((row, index) => ({ ...row, index })));
   };
+  useEffect(() => {
+    if (!incoming) return;
+    setText(incoming.text);
+    void run(async () => {
+      const parsed = await call('previewBibtex', incoming.text);
+      const pendingRows = [];
+      const fresh = [];
+      let filled = 0;
+      for (const [index, row] of parsed.entries()) {
+        const current = entries.find((entry) => entry.citationKey.toLowerCase() === row.citationKey.toLowerCase());
+        if (!current) {
+          if (entries.some((entry) => candidate(row, entry)) || parsed.some((other, at) =>
+            at !== index && other.citationKey.toLowerCase() === row.citationKey.toLowerCase())) {
+            pendingRows.push({ ...row, index });
+          } else fresh.push(row);
+          continue;
+        }
+        const fields = Object.keys(row.fields);
+        const missing = fields.filter((name) => !current.fields[name]);
+        const conflicts = current.bibtexType !== row.bibtexType || fields.some((name) =>
+          current.fields[name] && current.fields[name] !== row.fields[name]);
+        if (conflicts) pendingRows.push({ ...row, index });
+        else if (missing.length) {
+          await call('reconcileSource', current, row, missing);
+          filled++;
+        }
+      }
+      if (fresh.length) await call('importSources', fresh);
+      setPending(pendingRows);
+      setComparison(null);
+      return `Imported ${fresh.length}. Updated ${filled}. To review ${pendingRows.length}.`;
+    }, true);
+  }, [incoming]);
   const finish = ids => {
     const finished = new Set(ids);
     setPending(rows => rows.filter(row => !finished.has(row.index)));
@@ -78,7 +114,7 @@ function ImportBibtex({ entries, busy, run }) {
     return `Imported ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}.`;
   }, true);
   return (
-    <details className="rounded-xl border border-base-300 bg-base-100 p-4">
+    <details open={incoming ? true : undefined} className="border-t border-base-300 p-2">
       <summary className="cursor-pointer font-semibold">Import BibTeX</summary>
       <div className="mt-3 space-y-3">
         <textarea className="textarea min-h-28 w-full font-mono text-sm" aria-label="BibTeX input"
@@ -142,15 +178,21 @@ function ImportBibtex({ entries, busy, run }) {
 }
 
 function EntryEditor({ entry, busy, cancel, onSave }) {
+  const [snapshot, setSnapshot] = useState(entry);
   const [key, setKey] = useState(entry.citationKey);
   const [type, setType] = useState(entry.bibtexType);
   const [fields, setFields] = useState(entry.fields);
   const [newField, setNewField] = useState('');
+  const [aliases, setAliases] = useState((entry.aliases ?? []).join('\n'));
+  const [tags, setTags] = useState((entry.tags ?? []).join('\n'));
+  const [extra, setExtra] = useState(entry.extra ?? '');
+  const lines = (value) => value.split('\n').map((line) => line.trim()).filter(Boolean);
   const addName = newField.trim().toLowerCase();
   return (
     <form aria-label="Edit bibliographic entry" className="space-y-3" onSubmit={event => {
       event.preventDefault();
-      onSave({ citationKey: key.trim(), bibtexType: type.trim(), fields });
+      void Promise.resolve(onSave({ citationKey: key.trim(), bibtexType: type.trim(), fields, aliases: lines(aliases), tags: lines(tags), extra }, snapshot))
+        .then((saved) => { if (saved) setSnapshot(saved); });
     }}>
       <fieldset disabled={busy} className="space-y-3">
         <div className="grid gap-2 sm:grid-cols-2">
@@ -178,6 +220,14 @@ function EntryEditor({ entry, busy, cancel, onSave }) {
           <button type="button" className="btn btn-sm" disabled={!/^[a-z][a-z0-9_:.+/-]*$/.test(addName) || Object.hasOwn(fields, addName)}
             onClick={() => { setFields({ ...fields, [addName]: '' }); setNewField(''); }}>Add field</button>
         </div>
+        <div className="grid gap-2 md:grid-cols-2">
+          <label className="grid gap-1 text-sm">Aliases<textarea className="textarea" value={aliases}
+            onChange={(event) => setAliases(event.target.value)} /></label>
+          <label className="grid gap-1 text-sm">Tags<textarea className="textarea" value={tags}
+            onChange={(event) => setTags(event.target.value)} /></label>
+        </div>
+        <label className="grid gap-1 text-sm">Extra<textarea className="textarea" value={extra}
+          onChange={(event) => setExtra(event.target.value)} /></label>
         <div className="flex gap-2">
           <button type="submit" className="btn btn-primary btn-sm">Save entry</button>
           <button type="button" className="btn btn-sm" onClick={cancel}>Cancel</button>
@@ -188,134 +238,69 @@ function EntryEditor({ entry, busy, cancel, onSave }) {
 }
 
 function Entry({ entry, entries, busy, run }) {
-  const [editing, setEditing] = useState(null);
+  const navigate = useNavigate();
+  const [editorVersion, setEditorVersion] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [otherId, setOtherId] = useState('');
   const [comparison, setComparison] = useState(null);
   const others = entries.filter(row => row.id !== entry.id);
   const matched = others.filter(row => candidate(entry, row));
   const remaining = others.filter(row => !candidate(entry, row));
   return (
-    <section aria-label="Bibliographic entry" className="space-y-3 rounded-xl border border-base-300 bg-base-100 p-4">
-      {editing ? <EntryEditor entry={editing} busy={busy} cancel={() => setEditing(null)} onSave={updated => run(async () => {
-        await call('saveSource', editing, updated);
-        setEditing(null);
-        return 'Entry saved.';
-      }, true)} /> : (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-mono font-semibold">{entry.citationKey}</h2>
-            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => {
-              setComparison(null);
-              setEditing(entry);
-            }}>Edit entry</button>
-          </div>
-          <dl className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
-            {[['BibTeX type', entry.bibtexType], ...Object.entries(entry.fields)].map(([name, value]) => (
-              <div key={name} className="contents"><dt className="break-all font-medium">{name}</dt>
-                <dd className="whitespace-pre-wrap break-words">{value}</dd></div>
-            ))}
-          </dl>
-          {!!others.length && (
-            <div className="flex flex-wrap gap-2">
-              <select className="select select-sm max-w-full" aria-label="Entry to compare" value={otherId}
-                onChange={event => setOtherId(event.target.value)}>
-                <option value="">Choose an entry to compare</option>
-                {!!matched.length && <optgroup label="Possible matches">
-                  {matched.map(row => <option key={row.id} value={row.id}>{row.citationKey}</option>)}
-                </optgroup>}
-                {!!remaining.length && <optgroup label="Other entries">
-                  {remaining.map(row => <option key={row.id} value={row.id}>{row.citationKey}</option>)}
-                </optgroup>}
-              </select>
-              <button type="button" className="btn btn-sm" disabled={busy || !others.some(row => row.id === otherId)}
-                onClick={() => setComparison({ current: entry, other: others.find(row => row.id === otherId) })}>Compare entries</button>
-            </div>
-          )}
-          {comparison && (
-            <Compare key={comparison.other.id} current={comparison.current} incoming={comparison.other} stored busy={busy}
-              onCancel={() => setComparison(null)} onSave={(fields, key, type) => run(async () => {
-                await call('reconcileSource', comparison.current, comparison.other, fields, key, type, true);
-                setOtherId('');
-                setComparison(null);
-                return 'Entries reconciled.';
-              }, true)} />
-          )}
-        </>
+    <section aria-label="Bibliographic entry" className="space-y-3 p-3">
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /> Delete citation</button>
+      {confirmDelete && <div role="alertdialog" aria-label="Delete citation" className="alert">
+        <p>Delete this citation?</p>
+        <button type="button" className="btn btn-sm" onClick={() => setConfirmDelete(false)}>Cancel</button>
+        <button type="button" className="btn btn-error btn-sm" disabled={busy} onClick={() => run(async () => {
+          await call('deleteSource', entry);
+          navigate(sourcePath(entry.artifact.id));
+        }, true)}>Delete</button>
+      </div>}
+      <EntryEditor key={editorVersion} entry={entry} busy={busy} cancel={() => setEditorVersion((value) => value + 1)}
+        onSave={async (updated, snapshot) => {
+          let saved;
+          await run(async () => {
+            saved = await call('saveSource', snapshot, updated);
+            return 'Entry saved.';
+          }, true);
+          return saved;
+        }} />
+      {!!others.length && (
+        <div className="flex flex-wrap gap-2">
+          <select className="select select-sm max-w-full" aria-label="Entry to compare" value={otherId}
+            onChange={event => setOtherId(event.target.value)}>
+            <option value="">Choose an entry to compare</option>
+            {!!matched.length && <optgroup label="Possible matches">
+              {matched.map(row => <option key={row.id} value={row.id}>{row.citationKey}</option>)}
+            </optgroup>}
+            {!!remaining.length && <optgroup label="Other entries">
+              {remaining.map(row => <option key={row.id} value={row.id}>{row.citationKey}</option>)}
+            </optgroup>}
+          </select>
+          <button type="button" className="btn btn-sm" disabled={busy || !others.some(row => row.id === otherId)}
+            onClick={() => setComparison({ current: entry, other: others.find(row => row.id === otherId) })}>Compare entries</button>
+        </div>
+      )}
+      {comparison && (
+        <Compare key={comparison.other.id} current={comparison.current} incoming={comparison.other} stored busy={busy}
+          onCancel={() => setComparison(null)} onSave={(fields, key, type) => run(async () => {
+            await call('reconcileSource', comparison.current, comparison.other, fields, key, type, true);
+            setOtherId('');
+            setComparison(null);
+            return 'Entries reconciled.';
+          }, true)} />
       )}
     </section>
   );
 }
 
-function WorkLinks({ artifactId, path, revision, changed, busy, run }) {
-  const { noteId } = useParams();
-  const { state } = useLocation();
-  const { value, error } = useRead('sourceLinks', artifactId, revision);
-  const { value: notes } = useRead('listNotes', '', revision);
-  const [selectedNote, setSelectedNote] = useState('');
-  const [newId, setNewId] = useState(() => crypto.randomUUID());
-  const [text, setText] = useState('');
-  const [locator, setLocator] = useState('');
-  const choices = notes?.filter(note => !value?.notes.some(row => row.id === note.id)) ?? [];
-  if (error) return <p role="alert">{error}</p>;
-  if (!value) return <p>Loading artifact…</p>;
-  if (!value.artifact) return <p>This artifact is unavailable.</p>;
-  return (
-    <section aria-label="Notes and annotations" className="space-y-4 rounded-xl border border-base-300 bg-base-100 p-4">
-      <h2 className="font-semibold">Notes and annotations for {value.artifact.name}</h2>
-      <ul className="space-y-1">{value.notes.map(note => (
-        <li key={note.id}><Link className="link" to={path + '/' + note.id}>{note.title}</Link></li>
-      ))}</ul>
-      <div className="flex flex-wrap gap-2">
-        <Link className="btn btn-sm" to={path + '/' + newId} state={{ draft: true }}
-          onClick={() => setNewId(crypto.randomUUID())}>New linked note</Link>
-        {!!choices.length && (
-          <>
-            <select className="select select-sm" aria-label="Existing note" value={selectedNote}
-              onChange={event => setSelectedNote(event.target.value)}>
-              <option value="">Choose an existing note</option>
-              {choices.map(note => <option key={note.id} value={note.id}>{note.title}</option>)}
-            </select>
-            <button type="button" className="btn btn-sm" disabled={busy || !choices.some(row => row.id === selectedNote)}
-              onClick={() => run(async () => {
-                await call('link', selectedNote, 'artifact', artifactId);
-                setSelectedNote('');
-                return 'Note linked.';
-              }, true)}>Link existing note</button>
-          </>
-        )}
-      </div>
-      {noteId && <OpenNote key={noteId} id={noteId} draft={Boolean(state?.draft)} artifactId={artifactId} returnTo={path}
-        notes={notes ?? []} changed={changed} />}
-      <ul className="space-y-2">{value.annotations.map(annotation => (
-        <li key={annotation.id} className="rounded-lg bg-base-200 p-3">
-          {annotation.locator && <p className="text-sm font-medium">{annotation.locator}</p>}
-          <p className="whitespace-pre-wrap">{annotation.text}</p>
-        </li>
-      ))}</ul>
-      <form className="space-y-2" onSubmit={event => {
-        event.preventDefault();
-        run(async () => {
-          await call('addAnnotation', artifactId, text, locator);
-          setText('');
-          setLocator('');
-          return 'Annotation added.';
-        }, true);
-      }}>
-        <label className="grid gap-1 text-sm">Annotation
-          <textarea className="textarea w-full" value={text} onChange={event => setText(event.target.value)} />
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <input className="input input-sm" aria-label="Annotation locator" placeholder="Page or locator (optional)"
-            value={locator} onChange={event => setLocator(event.target.value)} />
-          <button type="submit" className="btn btn-sm" disabled={busy || !text.trim()}>Add annotation</button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
 export function Sources() {
-  const { id } = useParams();
+  const { id, noteId } = useParams();
+  const { state } = useLocation();
+  const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
+  const [incoming, setIncoming] = useState(null);
   const { revision, changed } = useOutletContext();
   const { value, error: loadError } = useRead('sourceLibrary', undefined, revision);
   const [error, setError] = useState('');
@@ -337,52 +322,78 @@ export function Sources() {
     setMessage('');
     try {
       setMessage(await work() ?? '');
-      if (refresh) changed();
     } catch (failure) {
       setError(failure.message);
     } finally {
+      if (refresh) changed();
       setBusy(false);
     }
   };
-  const displayWork = (workId, name) => (
-    <li key={workId} className="space-y-1 rounded-lg p-2 hover:bg-base-200">
-      <Link className="font-medium break-words" to={sourcePath(workId)} aria-current={id === workId ? 'page' : undefined}>{name}</Link>
-      <ul className="space-y-1 pl-3">{groups.get(workId)?.map(entry => (
-        <li key={entry.id}><Link className="link break-all font-mono text-sm" to={sourcePath(entry.id)}
-          aria-current={id === entry.id ? 'page' : undefined}>{entry.citationKey}</Link></li>
-      ))}</ul>
-    </li>
-  );
-  return (
-    <main className="mx-auto max-w-7xl space-y-4 px-4 py-5 md:px-7">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-semibold">Academic Sources</h1>
-        <button type="button" className="btn btn-sm" disabled={busy || !entries.length} onClick={exportBibtex}>Export .bib</button>
+  useEffect(() => {
+    const paste = (event) => {
+      const text = event.clipboardData?.getData('text/plain');
+      const target = event.target;
+      if (!text?.includes('@') || target?.closest?.('input, textarea, select, [contenteditable]')) return;
+      event.preventDefault();
+      setIncoming({ text });
+    };
+    document.addEventListener('paste', paste);
+    return () => document.removeEventListener('paste', paste);
+  }, []);
+
+  return <main className="flex min-h-0 flex-1 bg-base-100" aria-label="Academic Sources">
+    <aside className={`flex w-full flex-col border-base-300 md:flex md:w-80 md:shrink-0 md:border-e ${id || creating ? 'hidden' : ''}`}>
+      <div className="flex gap-2 border-b border-base-300 p-2">
+        <input className="input input-sm min-w-0 flex-1" type="search" aria-label="Search sources" placeholder="Search"
+          value={query} onChange={(event) => setQuery(event.target.value)} />
+        <button type="button" className="btn btn-sm btn-square" aria-label="Paste BibTeX" onClick={() => run(async () => {
+          setIncoming({ text: await navigator.clipboard.readText() });
+        })}><ClipboardPaste size={16} /></button>
+        <button type="button" className="btn btn-primary btn-sm btn-square" aria-label="New source" onClick={() => {
+          navigate('/sources');
+          setCreating(true);
+        }}><Plus size={16} /></button>
       </div>
       {(error || loadError) && <p role="alert" className="alert alert-error">{error || loadError}</p>}
-      {message && <p role="status" className="text-sm">{message}</p>}
-      <ImportBibtex entries={entries} busy={busy} run={run} />
-      <div className="grid gap-4 md:grid-cols-[17rem_minmax(0,1fr)]">
-        <aside className="space-y-2 rounded-xl border border-base-300 bg-base-100 p-3">
-          <h2 className="font-semibold">Artifacts</h2>
-          <input className="input input-sm w-full" type="search" aria-label="Search sources" placeholder="Search titles and keys"
-            value={query} onChange={event => setQuery(event.target.value)} />
-          <ul aria-label="Artifacts">
-            {works.map(work => displayWork(work.id, work.name))}
-            {[...groups.keys()].filter(key => !artifacts.some(work => work.id === key)
-              && groups.get(key).some(entry => entry.citationKey.toLowerCase().includes(search)))
-              .map(key => displayWork(key, 'Unavailable artifact'))}
-          </ul>
-          {value && !artifacts.length && !entries.length && <p className="text-sm text-base-content/65">No sources yet.</p>}
-        </aside>
-        <div className="min-w-0 space-y-4">
-          {selected && <Entry key={selected.id} entry={selected} entries={entries} busy={busy} run={run} />}
-          {artifactId ? <WorkLinks key={artifactId} artifactId={artifactId} path={sourcePath(id)}
-            revision={revision} changed={changed} busy={busy} run={run} />
-            : id ? <Link className="btn btn-sm" to="/sources">Back to artifacts</Link>
-              : !!entries.length && <p className="p-3 text-base-content/65">Select an artifact or citation.</p>}
-        </div>
-      </div>
-    </main>
-  );
+      {message && <p role="status" className="p-2 text-sm">{message}</p>}
+      <ul className="min-h-0 flex-1 overflow-y-auto" aria-label="Citations">
+        {entries.filter((entry) => [entry.citationKey, ...Object.values(entry.fields)].some((value) =>
+          value.toLowerCase().includes(search))).map((entry) => (
+          <li key={entry.id}><Link to={sourcePath(entry.id)} aria-current={entry.id === id ? 'page' : undefined}
+            onClick={() => setCreating(false)}
+            className={`block px-3 py-2 hover:bg-base-200 ${entry.id === id ? 'bg-base-300' : ''}`}>
+            <span className="block truncate">{entry.fields.title || entry.citationKey}</span>
+            <span className="block truncate text-xs text-base-content/60">{[entry.fields.author, entry.fields.year, entry.citationKey].filter(Boolean).join(' · ')}</span>
+          </Link></li>
+        ))}
+        {works.filter((work) => !groups.has(work.id)).map((work) => <li key={work.id}>
+          <Link className="block px-3 py-2 hover:bg-base-200" to={sourcePath(work.id)} onClick={() => setCreating(false)}>{work.name}</Link>
+        </li>)}
+        {value && !entries.length && !works.length && <li className="p-6 text-center text-sm text-base-content/60">{search ? 'Nothing found.' : 'No sources yet.'}</li>}
+      </ul>
+      <ImportBibtex entries={entries} busy={busy} run={run} incoming={incoming} />
+      <button type="button" className="btn btn-ghost btn-sm self-start m-2" disabled={busy || !entries.length} onClick={exportBibtex}>
+        <Download size={16} /> Export .bib
+      </button>
+    </aside>
+    <div className={`min-w-0 flex-1 overflow-y-auto ${!id && !creating ? 'hidden md:block' : ''}`}>
+      {(id || creating) && <button type="button" className="btn btn-ghost btn-sm md:hidden" onClick={() => {
+        setCreating(false);
+        navigate('/sources');
+      }}>Back to sources</button>}
+      {creating ? <div className="p-3"><EntryEditor entry={{ citationKey: '', bibtexType: 'article', fields: { title: '' } }}
+        busy={busy} cancel={() => setCreating(false)} onSave={(entry) => run(async () => {
+          const [created] = await call('importSources', [entry]);
+          setCreating(false);
+          navigate(sourcePath(created.id));
+        }, true)} /></div> : <>
+        {selected && <>
+          <Entry key={selected.id} entry={selected} entries={entries} busy={busy} run={run} />
+          {!state?.draft && !noteId && <SourceConnections key={selected.id} id={selected.id} revision={revision} changed={changed} busy={busy} run={run} />}
+        </>}
+        {artifactId && <WorkLinks key={artifactId} artifactId={artifactId} path={sourcePath(id)}
+          revision={revision} changed={changed} busy={busy} run={run} />}
+      </>}
+    </div>
+  </main>;
 }
