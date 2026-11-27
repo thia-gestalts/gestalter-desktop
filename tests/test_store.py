@@ -115,8 +115,23 @@ class StorageTest(unittest.TestCase):
         self.assertIsNone(self.store.note(first)["related"][0]["label"])
         with self.assertRaises(ValueError):
             self.store.image(attached["id"])
+        removed = self.store.delete_note(first)
+        self.assertIsNone(self.store.note(first))
+        self.store.restore_record(removed["record"], removed["images"])
+        self.assertEqual(self.store.note(first)["text"], "# Rounding\n\nUpdated.")
+        with self.assertRaises(ValueError):
+            self.store.restore_record(removed["record"], removed["images"])
+        self.store.edit_note(first, {"text": "With image"})
+        pictured = self.store.attach_image(first, "pixel.png", IMAGE)["attachments"][0]
+        removed = self.store.delete_note(first)
+        with self.assertRaises(ValueError):
+            self.store.image(pictured["id"])
+        self.store.restore_record(removed["record"], removed["images"])
+        self.assertEqual(self.store.image(pictured["id"]), uri)
         self.store.delete_note(first)
         self.assertIsNone(self.store.note(first))
+        with self.assertRaises(ValueError):
+            self.store.restore_record({"kind": "learning-event", "id": "x"})
 
     def test_zettelkasten_reports_inconsistent_placements(self):
         def place(id, relation="follows"):
@@ -181,7 +196,11 @@ class StorageTest(unittest.TestCase):
         self.assertEqual(self.store.inbox_item(item["id"])["notes"], [
             {"id": note_id, "title": "A note from the inbox"},
         ])
+        removed = self.store.remove_inbox(item["id"])
+        self.store.restore_record(removed)
+        self.assertEqual(self.store.inbox_item(item["id"])["notes"], [{"id": note_id, "title": "A note from the inbox"}])
         self.store.remove_inbox(item["id"])
+        self.assertIsNone(self.store.inbox_item(item["id"]))
         self.assertEqual(self.store.note(note_id)["text"], "A note from the inbox")
         self.assertEqual(self.store.import_inbox(read_folder(source)["files"]), {"added": 1, "duplicates": 1})
 

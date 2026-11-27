@@ -67,8 +67,10 @@ install -m 644 packaging/gestalter.desktop "$stage/usr/share/applications/gestal
 if [ "$format" = rpm ]; then
     rpmbuild -bb \
         --define "_topdir $work/rpmbuild" \
+        --define "_tmppath $work" \
         --define "_rpmdir $output" \
         --define "_rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
+        --define "_binary_payload w5.zstdio" \
         --define "gestalter_stage $stage" \
         --define "gestalter_version $version" \
         packaging/gestalter.spec

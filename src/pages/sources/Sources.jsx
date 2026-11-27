@@ -3,6 +3,7 @@ import { ClipboardPaste, Download, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { FilePicker } from '../../dumb/native-files';
+import { useToast } from '../../dumb/Toasts';
 import { WorkLinks } from './WorkLinks';
 import { useRead } from '../../entities/workspace/useRead';
 import { call } from '../../entities/workspace/storage';
@@ -240,7 +241,7 @@ function EntryEditor({ entry, busy, cancel, onSave }) {
 function Entry({ entry, entries, busy, run }) {
   const navigate = useNavigate();
   const [editorVersion, setEditorVersion] = useState(0);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const { toast } = useToast();
   const [otherId, setOtherId] = useState('');
   const [comparison, setComparison] = useState(null);
   const others = entries.filter(row => row.id !== entry.id);
@@ -248,15 +249,14 @@ function Entry({ entry, entries, busy, run }) {
   const remaining = others.filter(row => !candidate(entry, row));
   return (
     <section aria-label="Bibliographic entry" className="space-y-3 p-3">
-      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /> Delete citation</button>
-      {confirmDelete && <div role="alertdialog" aria-label="Delete citation" className="alert">
-        <p>Delete this citation?</p>
-        <button type="button" className="btn btn-sm" onClick={() => setConfirmDelete(false)}>Cancel</button>
-        <button type="button" className="btn btn-error btn-sm" disabled={busy} onClick={() => run(async () => {
-          await call('deleteSource', entry);
-          navigate(sourcePath(entry.artifact.id));
-        }, true)}>Delete</button>
-      </div>}
+      <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(async () => {
+        const removed = await call('deleteSource', entry);
+        navigate(sourcePath(entry.artifact.id));
+        toast(`Deleted citation ${removed.citationKey}.`, { action: { label: 'Undo', run: () => run(async () => {
+          await call('restoreRecord', removed);
+          navigate(sourcePath(removed.id));
+        }, true) } });
+      }, true)}><Trash2 size={16} /> Delete citation</button>
       <EntryEditor key={editorVersion} entry={entry} busy={busy} cancel={() => setEditorVersion((value) => value + 1)}
         onSave={async (updated, snapshot) => {
           let saved;

@@ -90,7 +90,7 @@ export async function logout() {
 }
 
 const noteWrites = new Set(['saveNote', 'deleteNote', 'link', 'attachImage', 'detachImage', 'placeNote']);
-const writes = new Set([...noteWrites, 'importPractice', 'importInbox', 'deferInbox', 'removeInbox',
+const writes = new Set([...noteWrites, 'importPractice', 'importInbox', 'deferInbox', 'removeInbox', 'restoreRecord',
   'importSources', 'saveSource', 'deleteSource', 'editSourceLinks', 'reconcileSource', 'addAnnotation']);
 export async function call(method, args, observed) {
   if (!session || method === 'pickInboxFolder' || method === 'saveBibtexFile')

@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { createHashRouter, Link, NavLink, Navigate, Outlet, RouterProvider } from 'react-router-dom';
 import { NotebookPen } from 'lucide-react';
 import { FilePicker } from './dumb/native-files';
+import { ToastProvider } from './dumb/Toasts';
 import { Notes } from './pages/notes/Notes';
 import { Practice } from './pages/practice/Practice';
 import { Inbox } from './pages/inbox/Inbox';
@@ -38,7 +39,7 @@ function Frame() {
       setImporting(false);
     }
   };
-  return (
+  return <ToastProvider>
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-base-100">
       <header className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-base-300 bg-base-100 px-4 py-2 md:px-6">
         <Link to="/notes" className="flex items-center gap-2 text-lg font-semibold"><NotebookPen size={20} /> Gestalter</Link>
@@ -59,7 +60,7 @@ function Frame() {
       {message && <p role="status" className="px-6 pt-3 text-sm">{message}</p>}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto"><Outlet context={{ revision, changed }} /></div>
     </div>
-  );
+  </ToastProvider>;
 }
 
 const router = createHashRouter([{

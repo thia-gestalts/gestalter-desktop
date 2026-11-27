@@ -1,6 +1,7 @@
 import { flushOpenEditor } from '../../features/note-edit/editorFlush';
 import { Clock, FolderUp, Plus, Trash2 } from 'lucide-react';
 import { InlineMarkdown } from '../../dumb/InlineMarkdown';
+import { useToast } from '../../dumb/Toasts';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { OpenNote } from '../../features/note-edit/note-route';
@@ -27,7 +28,7 @@ export function Inbox() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [report, setReport] = useState(null);
-  const [confirmRemove, setConfirmRemove] = useState(null);
+  const { toast } = useToast();
 
   const run = async (work) => {
     setBusy(true);
@@ -51,12 +52,17 @@ export function Inbox() {
 
   const leave = (method) => run(async () => {
     if (!await flushOpenEditor()) return;
-    await call(method, current);
-    const next = items?.find((entry) => entry.id !== current);
-    setConfirmRemove(null);
+    const left = current;
+    const removed = await call(method, left);
+    const next = items?.find((entry) => entry.id !== left);
     setNewId(crypto.randomUUID());
     changed();
     navigate(next ? `${route}/${next.id}` : route, { replace: true });
+    if (method === 'removeInbox') toast(`Deleted ${removed.name} from the inbox.`, { action: { label: 'Undo', run: async () => {
+      await call('restoreRecord', removed);
+      changed();
+      navigate(`${route}/${left}`, { replace: true });
+    } } });
   });
 
   const itemPath = `${route}/${current}`;
@@ -86,13 +92,8 @@ export function Inbox() {
       <div className="flex min-h-0 flex-col border-base-300 md:border-e">
         <div className="flex gap-2 border-b border-base-300 p-2">
           <button type="button" className="btn btn-sm" disabled={busy} onClick={() => leave('deferInbox')}><Clock size={16} /> Defer</button>
-          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setConfirmRemove(current)}><Trash2 size={16} /> Delete</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => leave('removeInbox')}><Trash2 size={16} /> Delete</button>
         </div>
-        {confirmRemove === current && <div role="alertdialog" aria-label="Delete imported text" className="alert">
-          <p>Delete this copy from the inbox?</p>
-          <button type="button" className="btn btn-sm" onClick={() => setConfirmRemove(null)}>Cancel</button>
-          <button type="button" className="btn btn-error btn-sm" disabled={busy} onClick={() => leave('removeInbox')}>Delete copy</button>
-        </div>}
         <pre className="min-h-0 flex-1 overflow-y-auto p-3 font-sans whitespace-pre-wrap wrap-break-word">{item.text}</pre>
         {!!item.notes.length && <section aria-label="Notes from this text" className="border-t border-base-300 p-2">
           <h3 className="font-semibold">Notes from this text</h3>

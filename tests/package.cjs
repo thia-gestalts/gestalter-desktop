@@ -96,7 +96,10 @@ async function main() {
     await page.getByRole('button', { name: 'Remove image' }).click();
     await image.waitFor({ state: 'detached' });
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    await page.getByRole('button', { name: 'Delete note' }).click();
+    await page.getByText('No matching notes.').waitFor();
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await page.getByRole('link', { name: 'Rounding notes' }).waitFor();
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
     await page.getByText('No matching notes.').waitFor();
     await page.getByRole('link', { name: 'Recent practice' }).click();
     await page.getByText('Round to the nearest ten', { exact: true }).waitFor();

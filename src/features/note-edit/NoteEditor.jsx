@@ -5,6 +5,7 @@ import { ImagePlus, Save, Trash2, Unlink } from 'lucide-react';
 import { MarkdownEditor } from '../../dumb/MarkdownEditor';
 import { NoteCard } from './NoteCard';
 import { FilePicker, imagePayload } from '../../dumb/native-files';
+import { useToast } from '../../dumb/Toasts';
 import { useRead } from '../../entities/workspace/useRead';
 import { call, edit } from '../../entities/workspace/storage';
 
@@ -68,7 +69,7 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
   const [error, setError] = useState('');
   const [target, setTarget] = useState('');
   const { value: results } = useRead('linkTargets', target ? target : undefined);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const { toast } = useToast();
   const saved = useRef(initial);
   const draft = useRef(fields(initial));
   const change = (field, value) => {
@@ -132,14 +133,20 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
   });
 
   const remove = async () => {
-    const removed = await enqueue(async () => {
-      await edit(saved.current?.olympHeads, 'deleteNote', id);
+    let removed;
+    const success = await enqueue(async () => {
+      removed = await edit(saved.current?.olympHeads, 'deleteNote', id);
       draft.current = fields(null);
       setValues(draft.current);
       updateNote(null);
     });
-    setConfirmDelete(false);
-    if (removed) navigate(returnTo);
+    if (!success) return;
+    navigate(returnTo);
+    toast('Note deleted.', { action: { label: 'Undo', run: async () => {
+      await call('restoreRecord', removed.record, removed.images);
+      onChanged();
+      navigate(`${returnTo}/${id}`);
+    } } });
   };
   const related = note?.related.filter((ref) => !['follows', 'branches from'].includes(ref.relation)) ?? [];
   const choices = notes.filter((candidate) => candidate.id !== id
@@ -167,7 +174,7 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
           <button type="button" className="btn btn-primary btn-sm" onClick={flush}
             disabled={busy || !dirty()}><Save size={16} /> Save</button>
           {note && <button type="button" className="btn btn-ghost btn-sm"
-            onClick={() => setConfirmDelete(true)}><Trash2 size={16} /> Delete</button>}
+            disabled={busy} onClick={remove}><Trash2 size={16} /> Delete</button>}
         </div>
       </div>
       {error && (
@@ -178,15 +185,6 @@ export function NoteEditor({ id, initial, onChanged, notes, inboxId, artifactId,
             setValues(draft.current);
             setError('');
           }}>Discard draft changes</button>}
-        </div>
-      )}
-      {confirmDelete && (
-        <div role="alertdialog" aria-label="Delete note" className="alert">
-          <span>Permanently delete this note?</span>
-          <div className="flex gap-2">
-            <button type="button" className="btn btn-sm" onClick={() => setConfirmDelete(false)}>Cancel</button>
-            <button type="button" className="btn btn-error btn-sm" disabled={busy} onClick={remove}>Delete note</button>
-          </div>
         </div>
       )}
       {!preview && <input className="input input-sm w-full" aria-label="Title" placeholder="Title" value={title}

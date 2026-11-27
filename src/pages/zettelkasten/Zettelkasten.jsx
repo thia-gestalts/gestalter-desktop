@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, Pencil } from 'lucide-react';
 import { NoteCard } from '../../features/note-edit/NoteCard';
 import { InlineMarkdown } from '../../dumb/InlineMarkdown';
+import { useToast } from '../../dumb/Toasts';
 import { edit } from '../../entities/workspace/storage';
 import { useEffect, useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
@@ -46,7 +47,6 @@ function NoteRows({ rows, selected }) {
 
 function Placement({ note, entries, busy, place }) {
   const [target, setTarget] = useState('');
-  const [confirmUnplace, setConfirmUnplace] = useState(false);
   const subject = entries.get(note.id);
   if (!subject) return null;
   const { status, place: current, marks } = subject;
@@ -80,21 +80,10 @@ function Placement({ note, entries, busy, place }) {
         {!root && status === 'unplaced' &&
           <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => place('root')}>Make root</button>}
         {taggedRoot && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => place('clearRoot')}>Clear root tag</button>}
-        {current && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => {
-          if ([...entries.values()].some((entry) => entry.place?.id === note.id)) setConfirmUnplace(true);
-          else void place('unplace');
-        }}>Unplace</button>}
+        {current && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => place('unplace')}>Unplace</button>}
         {status === 'unplaced' && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => place('exclude')}>Exclude</button>}
         {excluded && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => place('include')}>Include again</button>}
       </div>
-      {confirmUnplace && <div role="alertdialog" aria-label="Unplace note" className="alert">
-        <p>Notes placed below this one will need attention.</p>
-        <button type="button" className="btn btn-sm" onClick={() => setConfirmUnplace(false)}>Cancel</button>
-        <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => {
-          setConfirmUnplace(false);
-          void place('unplace');
-        }}>Unplace note</button>
-      </div>}
       {targets.length > 0 && (
         <div className="flex flex-wrap gap-2">
           <select className="select select-sm max-w-full" aria-label="Placement target" value={selected?.id ?? ''}
@@ -123,6 +112,7 @@ export function Zettelkasten() {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState('');
+  const { toast } = useToast();
   const entries = new Map(value?.entries.map((entry) => [entry.id, entry]));
   const tree = value?.rows.map((key) => entries.get(key)) ?? [];
   const choices = value?.entries ?? [];
@@ -154,7 +144,16 @@ export function Zettelkasten() {
     setBusy(true);
     setFailure('');
     try {
+      const previous = entries.get(note.id)?.place;
       await edit(note.olympHeads, 'placeNote', note.id, action, target);
+      if (action === 'unplace' && previous) {
+        const hasChildren = [...entries.values()].some((entry) => entry.place?.id === note.id);
+        toast(hasChildren ? 'Note unplaced. Notes placed below it need attention.' : 'Note unplaced.', {
+          action: { label: 'Undo', run: async () => {
+            await edit(undefined, 'placeNote', note.id, previous.relation, previous.id);
+            changed();
+          } } });
+      }
       if (action === branches) setExpanded((current) => new Set([...current, target]));
       setSelected(undefined);
       changed();

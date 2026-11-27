@@ -63,7 +63,7 @@ async function asset(request) {
 const methods = new Set([
   'listNotes', 'linkTargets', 'getNote', 'saveNote', 'deleteNote', 'link',
   'attachImage', 'detachImage', 'getImage', 'account', 'serviceOrigin', 'importPractice', 'recentPractice', 'learningHistory',
-  'zettelkasten', 'placeNote', 'pickInboxFolder', 'importInbox', 'listInbox', 'getInboxItem', 'deferInbox', 'removeInbox',
+  'zettelkasten', 'placeNote', 'pickInboxFolder', 'importInbox', 'listInbox', 'getInboxItem', 'deferInbox', 'removeInbox', 'restoreRecord',
   'previewBibtex', 'sourceLibrary', 'sourceLinks', 'sourceDetails', 'importSources', 'saveSource', 'deleteSource', 'editSourceLinks', 'reconcileSource', 'addAnnotation',
   'exportBibtex', 'saveBibtexFile',
 ]);

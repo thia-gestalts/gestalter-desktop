@@ -184,7 +184,6 @@ async function main() {
     assert.ok(await synced(peer.page) >= revision);
     await verify(peer.page, true);
     await peer.page.getByRole('button', { name: 'Delete', exact: true }).first().click();
-    await peer.page.getByRole('button', { name: 'Delete copy' }).click();
     await peer.page.getByText('1 left', { exact: true }).waitFor();
     assert.ok(await synced(peer.page) > revision);
     await close(peer);

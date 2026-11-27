@@ -27,7 +27,7 @@ WRITES = {
     "saveNote": "edit_note", "deleteNote": "delete_note", "link": "link",
     "attachImage": "attach_image", "detachImage": "detach_image", "importPractice": "import_practice",
     "placeNote": "place_note", "importInbox": "import_inbox", "deferInbox": "defer_inbox",
-    "removeInbox": "remove_inbox",
+    "removeInbox": "remove_inbox", "restoreRecord": "restore_record",
     "importSources": "import_sources", "saveSource": "save_source", "deleteSource": "delete_source", "editSourceLinks": "edit_source_links",
     "reconcileSource": "reconcile_source", "addAnnotation": "add_annotation",
 }
@@ -205,11 +205,35 @@ class Store:
         return record
 
     def delete_note(self, id):
+        """Return what undo needs: the stored record and its image bytes."""
         with self.transaction():
             record = self.require_note(id)
+            images = []
+            for ref in record.get("attachments", []):
+                row = self.db.execute("SELECT id, name, media_type, data FROM images WHERE id=?", (ref["id"],)).fetchone()
+                if row:
+                    images.append({"id": row["id"], "name": row["name"], "mediaType": row["media_type"],
+                                   "data": base64.b64encode(row["data"]).decode("ascii")})
             self.delete("note", id)
             for ref in record.get("attachments", []):
                 self.delete_unused_image(ref["id"])
+        return {"record": record, "images": images}
+
+    def restore_record(self, record, images=()):
+        """Undo a deletion. Only puts back records that are still absent."""
+        kind, id = identity(record)
+        if kind not in ("note", INBOX, academic.SOURCE):
+            raise ValueError("This record cannot be restored.")
+        with self.transaction():
+            if self.get(kind, id) is not None:
+                raise ValueError("This record already exists again.")
+            if kind == academic.SOURCE:
+                self.check_source_keys([record], self.list_sources())
+            for image in images if kind == "note" else ():
+                data = base64.b64decode(image["data"], validate=True)
+                self.db.execute("INSERT OR IGNORE INTO images VALUES (?, ?, ?, ?, ?)",
+                                (image["id"], image["name"], media_type(data), hashlib.sha256(data).hexdigest(), data))
+            self.put(record)
 
     def link_targets(self, query=""):
         rows = self.db.execute("""
@@ -355,7 +379,9 @@ class Store:
 
     def remove_inbox(self, id):
         with self.transaction():
+            item = self.require_inbox_item(id)
             self.delete(INBOX, id)
+        return item
 
     def list_sources(self):
         rows = self.db.execute("""
@@ -515,6 +541,7 @@ class Store:
         with self.transaction():
             record = self.current_source(snapshot)
             self.delete(academic.SOURCE, record["id"])
+        return record
 
     def reconcile_source(self, snapshot, incoming, take_fields, take_key=False, take_type=False, stored=False):
         with self.transaction():
