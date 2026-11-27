@@ -4,8 +4,9 @@ const { randomBytes } = require('node:crypto');
 const { mkdtemp, readFile, rename, rm, writeFile } = require('node:fs/promises');
 const { StorageClient } = require('./client.cjs');
 const { pythonCommand } = require('./platform.cjs');
+const { olympOrigin } = require('../package.json');
 
-const service = new URL(process.env.OLYMP_ORIGIN || 'http://127.0.0.1:8787');
+const service = new URL(process.env.OLYMP_ORIGIN || olympOrigin || 'http://127.0.0.1:8787');
 if (service.protocol !== 'https:' && !(service.protocol === 'http:' &&
     ['localhost', '127.0.0.1', '[::1]'].includes(service.hostname))) {
   throw Error('Olymp requires HTTPS outside loopback.');

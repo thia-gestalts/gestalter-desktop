@@ -3,15 +3,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createHashRouter, Link, NavLink, Navigate, Outlet, RouterProvider } from 'react-router-dom';
 import { NotebookPen } from 'lucide-react';
-import { FilePicker } from './dumb/native-files';
 import { ToastProvider } from './dumb/Toasts';
 import { Notes } from './pages/notes/Notes';
 import { Practice } from './pages/practice/Practice';
 import { Inbox } from './pages/inbox/Inbox';
 import { Sources } from './pages/sources/Sources';
 import { Zettelkasten } from './pages/zettelkasten/Zettelkasten';
-import { call } from './entities/workspace/storage';
-import { Account, AccountStatus } from './pages/account/Account';
+import { Account } from './pages/account/Account';
 import './dumb/style.css';
 
 function Frame() {
@@ -21,24 +19,6 @@ function Frame() {
     window.addEventListener('replica-change', changed);
     return () => window.removeEventListener('replica-change', changed);
   }, [changed]);
-  const [importing, setImporting] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  const importRecords = async ([file]) => {
-    setImporting(true);
-    setError('');
-    setMessage('');
-    try {
-      if (file.size > 16 * 1024 * 1024) throw new Error('The records file must be no larger than 16 MiB.');
-      const count = await call('importPractice', await file.text());
-      setMessage(count ? 'Learner records imported.' : 'No practice records found in this file.');
-      changed();
-    } catch (failure) {
-      setError(failure.message);
-    } finally {
-      setImporting(false);
-    }
-  };
   return <ToastProvider>
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-base-100">
       <header className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-base-300 bg-base-100 px-4 py-2 md:px-6">
@@ -51,13 +31,7 @@ function Frame() {
           <NavLink to="/practice" className="nav-link">Recent practice</NavLink>
           <NavLink to="/account" className="nav-link">Account</NavLink>
         </nav>
-        <AccountStatus />
-        <div className="ml-auto">
-          <FilePicker accept=".json,application/json" disabled={importing} onFiles={importRecords}>Import practice records</FilePicker>
-        </div>
       </header>
-      {error && <p role="alert" className="alert alert-error">{error}</p>}
-      {message && <p role="status" className="px-6 pt-3 text-sm">{message}</p>}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto"><Outlet context={{ revision, changed }} /></div>
     </div>
   </ToastProvider>;

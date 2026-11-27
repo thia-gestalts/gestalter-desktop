@@ -35,6 +35,7 @@ async function main() {
       XDG_CONFIG_HOME: path.join(temp, 'config'),
       GESTALTER_PYTHON: '/unused-in-the-package',
     };
+    delete env.OLYMP_ORIGIN;
     const start = () => _electron.launch({
       executablePath, env, timeout: 15000, chromiumSandbox: process.env.GESTALTER_TEST_SANDBOX !== '0',
       args: ['--ozone-platform=x11'],
@@ -45,6 +46,7 @@ async function main() {
     const failures = [];
     page.on('pageerror', (error) => failures.push(error.message));
     await page.getByText('No notes yet.').waitFor();
+    assert.equal(await page.evaluate(() => window.gestalter.serviceOrigin()), 'https://gestalter.koljasam.com');
     await page.getByRole('link', { name: 'Recent practice' }).click();
     await page.getByText('No practice recorded yet.').waitFor();
     const fixture = await fs.readFile(path.join(__dirname, 'fixtures', 'records.json'));

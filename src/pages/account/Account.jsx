@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { account } from '../../entities/workspace/storage';
 
-export function AccountStatus() {
+function SyncStatus() {
   const [status, setStatus] = useState('');
   useEffect(() => {
     let active = true;
@@ -16,7 +16,7 @@ export function AccountStatus() {
     const timer = setInterval(update, 750);
     return () => { active = false; clearInterval(timer); };
   }, []);
-  return <span role="status" className="text-sm">{status}</span>;
+  return <p role="status" className="text-sm text-base-content/70">{status}</p>;
 }
 
 export function Account() {
@@ -43,7 +43,7 @@ export function Account() {
       <fieldset disabled={busy || !client} className="flex flex-col gap-3">
         <h1 className="text-lg font-semibold">{client?.session ? 'Olymp account' : signup ? 'Create account' : 'Sign in'}</h1>
         {client?.session ? <>
-          <p>{client.session.account.name}</p><button className="btn">Sign out</button>
+          <p>{client.session.account.name}</p><SyncStatus /><button className="btn">Sign out</button>
         </> : <>
           <label>Login name <input name="name" className="input w-full" autoComplete="username" required /></label>
           <label>Password <input key={String(signup)} name="password" className="input w-full" type="password"

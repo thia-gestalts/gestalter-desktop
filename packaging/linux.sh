@@ -58,7 +58,13 @@ cp -a "$GESTALTER_PYTHON_ROOT/." "$resources/python/"
 cp -r desktop dist "$app/"
 cp backend/*.py "$app/backend/"
 cat > "$app/package.json" <<PACKAGE
-{"name":"gestalter-desktop","productName":"Gestalter","version":"$version","main":"desktop/main.cjs"}
+{
+  "name": "gestalter-desktop",
+  "productName": "Gestalter",
+  "version": "$version",
+  "main": "desktop/main.cjs",
+  "olympOrigin": "https://gestalter.koljasam.com"
+}
 PACKAGE
 
 install -m 755 packaging/gestalter "$stage/usr/bin/gestalter"
